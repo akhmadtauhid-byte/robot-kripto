@@ -69,6 +69,13 @@ canvas{width:100%;height:340px;display:block;background:var(--bg);border:1px sol
 .comp{display:grid;grid-template-columns:170px 70px 1fr;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid var(--line);font-size:13px}
 @media(max-width:620px){.comp{grid-template-columns:1fr}}
 .authbox{max-width:360px}
+.col{display:flex;flex-direction:column;gap:10px}
+.col input{width:100%}
+.userbar{display:flex;flex-wrap:wrap;gap:10px;justify-content:space-between;align-items:center}
+.hide{display:none!important}
+tr.nonaktif td{opacity:.55}
+.izinbox{display:flex;flex-wrap:wrap;gap:8px 14px;margin:6px 0}
+.sandibox{font:600 16px ui-monospace,Consolas,monospace;background:var(--bg);border:1px dashed var(--s1);border-radius:6px;padding:8px 10px;display:inline-block;user-select:all}
 </style>
 </head>
 <body>
@@ -77,36 +84,55 @@ canvas{width:100%;height:340px;display:block;background:var(--bg);border:1px sol
   <h1>Robot Analisa Kripto</h1>
   <p class="sub">Skor teknikal harian (-100 s.d. +100) dari tren, RSI, MACD, breakout, dan volume, lengkap dengan rencana stop/target, ukuran posisi, backtest, pemindai, dan jurnal. Alat edukasi, bukan saran investasi.</p>
 
-  <div class="card" id="pinCard" hidden>
-    <h3>Masukkan PIN</h3>
-    <div class="row authbox"><label>PIN <input type="password" id="pinIn" autocomplete="off"></label><button class="primary" id="pinOk">Masuk</button></div>
-    <div class="err" id="pinErr" role="alert"></div>
+  <div class="card" id="authCard" hidden>
+    <h3 id="authJudul">Masuk</h3>
+    <p class="note" id="authInfo" style="margin-top:0"></p>
+    <div class="col authbox">
+      <label id="fKode">Kode setup (dari menu Sheet)<input type="text" id="inKode" autocomplete="off" autocapitalize="characters"></label>
+      <label id="fNama">Nama Anda<input type="text" id="inNama" maxlength="40" autocomplete="name"></label>
+      <label id="fUser">Username<input type="text" id="inUser" maxlength="20" autocomplete="username" autocapitalize="none"></label>
+      <label id="fLama">Sandi sementara / sandi lama<input type="password" id="inLama" autocomplete="current-password"></label>
+      <label id="fPass">Sandi<input type="password" id="inPass" autocomplete="current-password"></label>
+      <label id="fPass2">Ulangi sandi baru<input type="password" id="inPass2" autocomplete="new-password"></label>
+      <button class="primary" id="authOk">Masuk</button>
+    </div>
+    <div class="err" id="authErr" role="alert"></div>
   </div>
 
   <div id="appView" hidden>
+  <div class="card userbar" id="userBar">
+    <div><b id="ubNama"></b> <span class="chip" id="ubPeran"></span><div class="note" id="ubIzin"></div></div>
+    <div class="row"><button id="btnSandi" class="seg">Ganti sandi</button><button id="btnKeluar" class="seg">Keluar</button></div>
+  </div>
   <div class="card">
     <h3>Kondisi pasar</h3>
     <div id="pasarOut"></div>
     <div class="note" id="updOut" style="margin-top:6px"></div>
+    <div class="row" data-izin="pengaturan" style="margin-top:10px;align-items:flex-end">
+      <label>Samakan dengan harga Ajaib: koin <select id="kalKode"></select></label>
+      <label>Harga di Ajaib (Rp) <input type="number" id="kalRp" min="0" step="any" inputmode="decimal" placeholder="lihat di aplikasi Ajaib"></label>
+      <button id="kalOk">Samakan kurs</button><button id="kalAuto" title="Kembali memakai kurs otomatis">Kurs otomatis</button>
+      <span class="note" id="kalMsg" role="status"></span>
+    </div>
+    <div class="note">Harga di Ajaib sedikit berbeda dari harga Binance × kurs. Isi harga satu koin persis seperti di aplikasi Ajaib; robot menghitung ulang kurs sehingga semua harga Rp dan untung/rugi mendekati angka di Ajaib.</div>
   </div>
 
-  <div class="card">
+  <div class="card" data-izin="watchlist,pindai">
     <h3>Watchlist koin</h3>
     <div class="row">
-      <label>Kode koin <input type="text" id="kode" placeholder="BTC" maxlength="10" style="width:110px" autocapitalize="characters"></label>
-      <button class="primary" id="btnTambah">Tambah &amp; analisa</button>
+      <label data-izin="watchlist">Kode koin <input type="text" id="kode" placeholder="BTC" maxlength="10" style="width:110px" autocapitalize="characters"></label>
+      <button class="primary" id="btnTambah" data-izin="watchlist">Tambah &amp; analisa</button>
       <button id="btnMuat">Muat ulang</button>
-      <button id="btnTg" title="Kirim pesan percobaan ke Telegram">Tes Telegram</button>
     </div>
     <div class="err" id="msg" role="alert"></div>
     <div class="note">Cukup kode koinnya (BTC, ETH, SOL), tanpa USDT. Data harian dari Binance (cadangan Coinbase). Skor dihitung dari candle harian yang sudah <b>tutup</b> (pukul 07.00 WIB); harga terkini ikut candle berjalan.</div>
   </div>
 
-  <div class="card">
+  <div class="card" data-izin="pengaturan">
     <h3>Pengaturan (ukuran posisi &amp; backtest)</h3>
     <div class="row" id="cfgRow"></div>
     <div class="row" style="margin-top:8px"><button id="btnCfg">Simpan pengaturan</button><span class="note" id="cfgMsg" role="status"></span></div>
-    <div class="note" style="margin-top:6px">Fee &amp; pajak hanya contoh; samakan dengan tarif Tokocrypto Anda. Kurs USDT/IDR diambil otomatis bila kolom kurs manual diisi 0.</div>
+    <div class="note" style="margin-top:6px">Fee bawaan = tarif taker Ajaib Kripto pasangan IDR (beli ±0,233%, jual ±0,443% sudah termasuk pajak PPh 22 dan biaya SRO). Cocokkan dengan rincian biaya di aplikasi Ajaib bila tarifnya berubah. Kurs USDT/IDR otomatis bila kolom kurs manual 0; untuk menyamakan dengan harga di Ajaib, pakai kotak "Samakan dengan harga Ajaib" di atas.</div>
   </div>
 
   <div class="card" id="wlCard" hidden>
@@ -116,9 +142,9 @@ canvas{width:100%;height:340px;display:block;background:var(--bg);border:1px sol
 
   <section id="detail" hidden></section>
 
-  <div class="card">
+  <div class="card" data-izin="pindai">
     <h3>Pemindai potensi naik (28 koin besar)</h3>
-    <p class="note" style="margin-top:0">Memeriksa volume yang melonjak saat harga naik, dekat/menembus high 20 hari, dan tren pendukung. Penyaring awal, bukan jaminan harga naik. Pastikan koinnya tersedia di Tokocrypto sebelum membeli.</p>
+    <p class="note" style="margin-top:0">Memeriksa volume yang melonjak saat harga naik, dekat/menembus high 20 hari, dan tren pendukung. Penyaring awal, bukan jaminan harga naik. Pastikan koinnya tersedia di Ajaib sebelum membeli.</p>
     <div class="row" style="align-items:center">
       <button class="primary" id="btnScan">Pindai sekarang</button>
       <button id="btnScanBaru" title="Ambil ulang data terbaru, bukan dari simpanan 15 menit">Data terbaru</button>
@@ -128,23 +154,24 @@ canvas{width:100%;height:340px;display:block;background:var(--bg);border:1px sol
     <div class="tblwrap" id="scanOut" style="margin-top:8px"></div>
   </div>
 
-  <div class="card">
+  <div class="card" data-izin="jurnal">
     <h3>Posisi saya (pantauan)</h3>
     <div id="posOut"></div>
   </div>
 
-  <div class="card">
+  <div class="card" data-izin="jurnal">
     <h3>Jurnal trading &amp; rapor akurasi</h3>
     <p class="note" style="margin-top:0">Catat setiap pembelian beserta daftar periksa. Setelah posisi ditutup, rapor menunjukkan seberapa sering sinyal robot dan disiplin Anda benar-benar menghasilkan untung.</p>
     <details id="jrForm">
       <summary><b>Catat pembelian baru</b></summary>
+      <p class="note" style="margin:8px 0 0">Isi seperti yang tertulis di Ajaib. Koin harus sudah ada di Watchlist (tambahkan dulu bila belum). Sudah terlanjur beli? Isi harga beli dan nominal Anda, lalu tekan "Isi dari rencana robot": stop &amp; target dihitung dari harga beli Anda.</p>
       <div class="row" style="margin-top:8px">
         <label>Koin <select id="jrKode"></select></label>
-        <label>Harga beli (USDT) <input type="number" id="jrE" min="0" step="any" inputmode="decimal"></label>
-        <label>atau harga beli (Rp) <input type="number" id="jrIdr" min="0" step="any" inputmode="decimal"></label>
+        <label>Nominal beli (Rp) <input type="number" id="jrNom" min="0" step="any" inputmode="decimal" placeholder="100000"></label>
+        <label>Harga beli per koin (Rp) <input type="number" id="jrIdr" min="0" step="any" inputmode="decimal"></label>
         <label>Jumlah koin <input type="number" id="jrQ" min="0" step="any" inputmode="decimal"></label>
-        <label>Stop (USDT) <input type="number" id="jrStop" min="0" step="any" inputmode="decimal"></label>
-        <label>Target (USDT) <input type="number" id="jrTp" min="0" step="any" inputmode="decimal"></label>
+        <label>Stop (Rp) <input type="number" id="jrStopIdr" min="0" step="any" inputmode="decimal"></label>
+        <label>Target (Rp) <input type="number" id="jrTpIdr" min="0" step="any" inputmode="decimal"></label>
         <label>Tanggal beli <input type="date" id="jrTgl"></label>
         <button id="jrIsi" type="button">Isi dari rencana robot</button>
       </div>
@@ -160,6 +187,40 @@ canvas{width:100%;height:340px;display:block;background:var(--bg);border:1px sol
     <h4>Rapor akurasi</h4>
     <div id="jrRapor"></div>
     <details style="margin-top:10px"><summary>Riwayat transaksi tertutup</summary><div id="jrHist" class="tblwrap"></div></details>
+  </div>
+
+  <div class="card" data-izin="notif">
+    <h3>Notifikasi Telegram saya</h3>
+    <div class="note" id="tgInfo" style="margin-top:0"></div>
+    <div class="row" style="margin-top:8px">
+      <label>Chat ID Telegram Anda <input type="text" id="tgChat" inputmode="numeric" placeholder="contoh 123456789" style="width:200px"></label>
+      <button id="btnTgSimpan">Simpan</button>
+      <button id="btnTg" title="Kirim pesan percobaan ke Telegram Anda">Tes Telegram</button>
+      <span class="note" id="tgMsg" role="status"></span>
+    </div>
+  </div>
+
+  <div class="card" data-izin="admin">
+    <h3>Admin: kelola pengguna</h3>
+    <div class="tblwrap"><table id="admTbl"></table></div>
+    <div id="admHasil" role="status"></div>
+    <details id="admForm" style="margin-top:10px">
+      <summary><b>Tambah pengguna baru</b></summary>
+      <div class="row" style="margin-top:8px">
+        <label>Nama <input type="text" id="admNama" maxlength="40"></label>
+        <label>Username <input type="text" id="admUser" maxlength="20" autocapitalize="none"></label>
+        <label>Peran awal <select id="admPeran"></select></label>
+      </div>
+      <div class="izinbox" id="admIzin"></div>
+      <div class="row" style="align-items:center"><button class="primary" id="admBuat">Buat pengguna</button><span class="note" id="admMsg" role="status"></span></div>
+      <p class="note">Sistem membuatkan sandi sementara. Berikan sandi itu ke pengguna lewat jalur pribadi; ia wajib menggantinya saat pertama masuk.</p>
+    </details>
+    <details style="margin-top:10px">
+      <summary><b>Bot Telegram (dipakai bersama semua pengguna)</b></summary>
+      <p class="note" id="admBotInfo"></p>
+      <div class="row"><label>Token bot dari BotFather <input type="password" id="admBotTok" autocomplete="off" style="width:280px"></label><button id="admBotSimpan">Simpan token</button><button class="danger" id="admBotHapus">Lepas bot</button><span class="note" id="admBotMsg" role="status"></span></div>
+      <p class="note">Setiap pengguna mengisi Chat ID-nya sendiri. Pesan alert hanya berisi data milik pengguna itu.</p>
+    </details>
   </div>
   </div><!-- /appView -->
 
@@ -474,7 +535,11 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const {fx, fi, pct} = ENG;
-const S = {data: null, views: {}, ps: null, sel: null, range: 120, sma200: false, cfg: {}, jr: [], kurs: 0, scan: null, pin: ''};
+const S = {data: null, views: {}, ps: null, sel: null, range: 120, sma200: false, cfg: {}, jr: [], kurs: 0, scan: null, tok: '', user: null, mode: 'login', adm: null};
+const IZIN_NAMA = {watchlist: 'Kelola watchlist', pindai: 'Pemindai', jurnal: 'Jurnal & posisi', pengaturan: 'Pengaturan', notif: 'Notifikasi Telegram', admin: 'Admin'};
+const rp = x => x == null || isNaN(x) ? '–' : (Math.abs(x) >= 1000 ? fi(x) : fx(x));
+const rpTanda = x => (x >= 0 ? '+' : '-') + 'Rp ' + rp(Math.abs(x));
+const bisa = i => !!(S.user && S.user.izin.indexOf(i) >= 0);
 const CFG_FIELDS = [
   ['modal', 'Modal (Rp)', 100000], ['risiko', 'Risiko per transaksi (%)', 0.1], ['atr', 'Stop = ATR ×', 0.5], ['masuk', 'Skor beli ≥', 5], ['keluar', 'Skor keluar ≤', 5],
   ['feeBeli', 'Fee+pajak beli (%)', 0.01], ['feeJual', 'Fee+pajak jual (%)', 0.01], ['alokasi', 'Maks. alokasi/koin (%)', 5], ['minOrder', 'Order minimal (Rp)', 1000],
@@ -485,27 +550,70 @@ function apiSiap() { return API_URL && API_URL.indexOf('GANTI_DENGAN') !== 0; }
 async function api(a, body) {
   if (!apiSiap()) throw new Error('API_URL di index.html belum diisi dengan URL Web App (lihat panduan).');
   let res;
-  try { res = await fetch(API_URL, {method: 'POST', headers: {'Content-Type': 'text/plain;charset=utf-8'}, body: JSON.stringify(Object.assign({a, pin: S.pin}, body || {}))}); }
+  try { res = await fetch(API_URL, {method: 'POST', headers: {'Content-Type': 'text/plain;charset=utf-8'}, body: JSON.stringify(Object.assign({a, tok: S.tok}, body || {}))}); }
   catch (e) { throw new Error('Tidak bisa menghubungi server. Periksa internet dan URL Web App.'); }
   let j; try { j = await res.json(); } catch (e) { throw new Error('Jawaban server tidak terbaca. Pastikan Web App di-deploy dengan akses "Anyone".'); }
-  if (j && j.pin) { tampilPin(true, j.err); throw new Error(j.err); }
+  if (j && j.auth) { keluar(j.err); throw new Error(j.err); }
+  if (j && j.ganti) { tampilAuth('ganti', j.err); throw new Error(j.err); }
   if (!j.ok) throw new Error(j.err || 'Server menolak permintaan.');
   return j;
 }
 function setMsg(t, bad) { const e = $('#msg'); e.textContent = t || ''; e.style.color = bad ? '' : 'var(--ink2)'; }
-function tampilPin(on, err) { $('#pinCard').hidden = !on; $('#appView').hidden = on; $('#pinErr').textContent = err || ''; }
 function kunci(on) { ['#btnTambah', '#btnMuat', '#btnScan', '#btnScanBaru'].forEach(i => { $(i).disabled = on; }); }
+
+/* ---------- masuk / keluar ---------- */
+function tampilAuth(mode, err) {
+  S.mode = mode; $('#authCard').hidden = false; $('#appView').hidden = true; $('#authErr').textContent = err || '';
+  const tampil = {setup: ['fKode', 'fNama', 'fUser', 'fPass', 'fPass2'], login: ['fUser', 'fPass'], ganti: ['fLama', 'fPass', 'fPass2']}[mode];
+  ['fKode', 'fNama', 'fUser', 'fLama', 'fPass', 'fPass2'].forEach(id => $('#' + id).classList.toggle('hide', tampil.indexOf(id) < 0));
+  $('#authJudul').textContent = {setup: 'Buat akun admin pertama', login: 'Masuk', ganti: 'Ganti sandi'}[mode];
+  $('#authOk').textContent = {setup: 'Buat akun admin', login: 'Masuk', ganti: 'Simpan sandi baru'}[mode];
+  $('#authInfo').textContent = {setup: 'Belum ada akun. Buat kode setup lewat menu Robot Kripto > 2. Buat kode setup admin di Google Sheet, lalu isi di sini.', login: 'Masuk dengan akun yang dibuat admin.', ganti: 'Sandi minimal 8 karakter dan harus berbeda dari sandi sebelumnya.'}[mode];
+  $('#fPass').firstChild.textContent = mode === 'ganti' ? 'Sandi baru' : 'Sandi';
+  $('#inPass').autocomplete = mode === 'login' ? 'current-password' : 'new-password';
+  ['#inPass', '#inPass2', '#inLama'].forEach(i => { $(i).value = ''; });
+}
+function keluar(pesan) {
+  S.tok = ''; S.user = null; S.data = null; S.scan = null; S.views = {}; S.sel = null;
+  try { localStorage.removeItem('rk_tok'); } catch (e) {}
+  tampilAuth('login', pesan || '');
+}
+function simpanSesi(j) { S.tok = j.tok; S.user = j.user; try { localStorage.setItem('rk_tok', S.tok); } catch (e) {} }
+async function authKirim() {
+  const err = $('#authErr'), v = id => $(id).value; err.textContent = ''; $('#authOk').disabled = true;
+  try {
+    if (S.mode === 'login') { simpanSesi(await api('login', {username: v('#inUser'), password: v('#inPass')})); }
+    else if (S.mode === 'setup') {
+      if (v('#inPass') !== v('#inPass2')) throw new Error('Pengulangan sandi tidak sama.');
+      simpanSesi(await api('setup', {kode: v('#inKode'), nama: v('#inNama'), username: v('#inUser'), password: v('#inPass')}));
+    } else {
+      if (v('#inPass') !== v('#inPass2')) throw new Error('Pengulangan sandi baru tidak sama.');
+      simpanSesi(await api('ganti_sandi', {lama: v('#inLama'), baru: v('#inPass')}));
+    }
+    $('#inPass').value = $('#inPass2').value = $('#inLama').value = '';
+    await muat();
+  } catch (e) { if (!err.textContent) err.textContent = e.message; }
+  $('#authOk').disabled = false;
+}
+function terapkanIzin() {
+  document.querySelectorAll('[data-izin]').forEach(el => { el.classList.toggle('hide', !el.dataset.izin.split(',').some(bisa)); });
+  const u = S.user;
+  $('#ubNama').textContent = u.nama; $('#ubPeran').textContent = u.peran;
+  $('#ubIzin').textContent = 'Akses: ' + u.izin.map(i => IZIN_NAMA[i] || i).join(', ');
+}
 
 async function muat() {
   kunci(true); setMsg('Mengambil data...', false);
   try {
     const j = await api('data');
-    S.data = j; S.cfg = j.cfg; S.jr = j.jurnal || []; S.kurs = j.kurs || 0;
-    tampilPin(false);
+    S.data = j; S.cfg = j.cfg; S.jr = j.jurnal || []; S.kurs = j.kurs || 0; S.user = j.user;
+    $('#authCard').hidden = true; $('#appView').hidden = false;
+    terapkanIzin();
     hitungSemua();
     setMsg(j.gagal.length ? 'Data gagal diambil untuk: ' + j.gagal.join(', ') + '.' : '', true);
     if (!S.sel || !S.views[S.sel]) S.sel = urutan()[0] || null;
     renderAll();
+    if (bisa('admin')) muatAdmin();
   } catch (e) { setMsg(e.message, true); }
   kunci(false);
 }
@@ -522,7 +630,11 @@ function cfgMesin() {
 function urutan() { return Object.keys(S.views).filter(k => S.views[k].wl && S.views[k].ok).sort((a, b) => S.views[b].score - S.views[a].score); }
 
 /* ---------- render ---------- */
-function renderAll() { renderPasar(); renderCfg(); renderWatch(); renderDetail(); renderScan(); renderPos(); renderJurnal(); }
+function renderAll() { renderPasar(); renderCfg(); renderWatch(); renderDetail(); renderScan(); renderPos(); renderJurnal(); renderTg(); }
+function renderTg() {
+  const t = S.data.tg; $('#tgChat').value = t.chatId || '';
+  $('#tgInfo').textContent = t.bot ? 'Bot sudah dipasang admin' + (t.botNama ? ' (@' + t.botNama + ')' : '') + '. Buka bot itu di Telegram, tekan Start, lalu cari Chat ID Anda (misalnya lewat bot @userinfobot) dan isi di bawah. Alert posisi dan kandidat beli akan dikirim ke Chat ID ini.' : 'Admin belum memasang bot Telegram. Minta admin mengisi token bot terlebih dahulu.';
+}
 function renderPasar() {
   const p = S.ps, f = S.data.fng, b = S.views.BTC;
   const fg = f ? `<div class="kpi"><b>Fear &amp; Greed</b><span class="${f.v >= 75 || f.v <= 25 ? 'warn' : ''}">${f.v} · ${esc(f.t)}</span></div>` : '';
@@ -533,7 +645,7 @@ function renderPasar() {
     <div class="kpi"><b>Kurs USDT/IDR</b><span>${S.kurs ? 'Rp ' + fi(S.kurs) : 'tidak tersedia'}</span></div></div>
     <div class="note" style="margin-top:6px">${esc(p.why)}${p.ketat && S.cfg.ketatPasar ? ' Syarat kandidat beli diperketat (+15 poin).' : ''} Altcoin biasanya mengikuti arah BTC.</div>`;
   const t = new Date(S.data.upd);
-  $('#updOut').textContent = 'Diperbarui ' + t.toLocaleString('id-ID') + ' · sumber kurs: ' + S.data.kursSrc + (S.data.tg ? ' · Telegram aktif' : ' · Telegram belum diatur') + ' · versi server ' + S.data.v;
+  $('#updOut').textContent = 'Diperbarui ' + t.toLocaleString('id-ID') + ' · sumber kurs: ' + S.data.kursSrc + (S.data.tg.bot && S.data.tg.chatId ? ' · Telegram aktif' : ' · Telegram belum diatur') + ' · versi server ' + S.data.v;
 }
 function renderCfg() {
   const row = $('#cfgRow');
@@ -555,14 +667,14 @@ function meter(v) {
 function renderWatch() {
   const ks = urutan(), tbl = $('#wl'); $('#wlCard').hidden = !ks.length && !S.data.gagal.length;
   const cfg = cfgMesin();
-  let h = '<tr><th>Koin</th><th class="num">Harga (USDT)</th><th class="num">Harga (Rp)</th><th class="num">24j</th><th class="num">7h</th><th>Skor</th><th>Sinyal</th><th class="num">RSI</th><th>Kandidat?</th><th></th></tr>';
+  let h = '<tr><th>Koin</th><th class="num">Harga (Rp)</th><th class="num">Harga (USDT)</th><th class="num">24j</th><th class="num">7h</th><th>Skor</th><th>Sinyal</th><th class="num">RSI</th><th>Kandidat?</th><th></th></tr>';
   ks.forEach(k => {
     const v = S.views[k], kd = ENG.kandidat(v, cfg, S.ps);
-    h += `<tr data-k="${k}" tabindex="0" class="${k === S.sel ? 'sel' : ''}"><td><b>${k}</b></td><td class="num">${fx(v.price)}</td><td class="num">${S.kurs ? fi(v.price * S.kurs) : '–'}</td>
+    h += `<tr data-k="${k}" tabindex="0" class="${k === S.sel ? 'sel' : ''}"><td><b>${k}</b></td><td class="num"><b>${S.kurs ? rp(v.price * S.kurs) : '–'}</b></td><td class="num">${fx(v.price)}</td>
       <td class="num ${v.chg24 >= 0 ? 'good' : 'bad'}">${pct(v.chg24)}</td><td class="num ${v.chg7 >= 0 ? 'good' : 'bad'}">${pct(v.chg7)}</td>
       <td>${meter(v.score)}${v.score.toFixed(0)}</td><td><span class="badge ${v.vd.cls}">${v.vd.ic} ${v.vd.t}</span></td><td class="num">${v.rsi == null ? '–' : v.rsi.toFixed(0)}</td>
       <td title="${esc(kd.alasan.join('; '))}" class="${kd.ok ? 'good' : 'warn'}">${kd.ok ? 'Ya' : 'Belum'}</td>
-      <td><button class="seg danger" data-del="${k}" title="Hapus dari watchlist">Hapus</button></td></tr>`;
+      <td>${bisa('watchlist') ? `<button class="seg danger" data-del="${k}" title="Hapus dari watchlist">Hapus</button>` : ''}</td></tr>`;
   });
   S.data.gagal.forEach(k => { h += `<tr><td><b>${esc(k)}</b></td><td colspan="9" class="bad">Data gagal diambil atau kurang dari 40 hari.</td></tr>`; });
   tbl.innerHTML = h;
@@ -576,20 +688,20 @@ function renderDetail() {
   const lv = pl ? {e: pl.e, stop: pl.stop, t1: pl.t1, t2: pl.t2} : null;
   const bad = !pl ? '<p class="note">Rencana trade belum bisa dihitung (kurs atau ATR belum tersedia).</p>' : `
     <table class="kv">
-      <tr><td>Entry (harga sekarang)</td><td class="num">${fx(pl.e)} USDT · Rp ${fi(pl.e * pl.kurs)}</td></tr>
-      <tr><td>Stop loss (${S.cfg.atr}× ATR)</td><td class="num bad">${fx(pl.stop)} USDT · ${pct(pl.stopPct)}</td></tr>
-      <tr><td>Target 1 (2R)</td><td class="num good">${fx(pl.t1)} USDT</td></tr>
-      <tr><td>Target 2 (3R)</td><td class="num good">${fx(pl.t2)} USDT</td></tr>
+      <tr><td>Entry (harga sekarang)</td><td class="num">Rp ${rp(pl.e * pl.kurs)} <span class="note">(${fx(pl.e)} USDT)</span></td></tr>
+      <tr><td>Stop loss (${S.cfg.atr}× ATR)</td><td class="num bad">Rp ${rp(pl.stop * pl.kurs)} · ${pct(pl.stopPct)} <span class="note">(${fx(pl.stop)} USDT)</span></td></tr>
+      <tr><td>Target 1 (2R)</td><td class="num good">Rp ${rp(pl.t1 * pl.kurs)} <span class="note">(${fx(pl.t1)} USDT)</span></td></tr>
+      <tr><td>Target 2 (3R)</td><td class="num good">Rp ${rp(pl.t2 * pl.kurs)} <span class="note">(${fx(pl.t2)} USDT)</span></td></tr>
       <tr><td>Jumlah koin yang sesuai aturan</td><td class="num"><b>${pl.q}</b> ${esc(k)} <span class="note">(dibatasi ${pl.bind})</span></td></tr>
       <tr><td>Nilai beli</td><td class="num">Rp ${fi(pl.costIdr)}</td></tr>
       <tr><td>Rugi bila kena stop (termasuk fee)</td><td class="num bad">Rp ${fi(pl.lossStop)}</td></tr>
       <tr><td>Untung di target 1 / 2 (bersih fee)</td><td class="num good">Rp ${fi(pl.gainT1)} / Rp ${fi(pl.gainT2)}</td></tr>
     </table>
     ${pl.q <= 0 ? '<p class="warn note">Jumlah 0: modal atau batas risiko terlalu kecil untuk koin ini. Naikkan risiko/alokasi atau pilih koin lain.</p>' : ''}
-    ${pl.q > 0 && !pl.minOk ? `<p class="warn note">Nilai beli di bawah order minimal (Rp ${fi(S.cfg.minOrder)}). Cek batas minimal di Tokocrypto.</p>` : ''}`;
+    ${pl.q > 0 && !pl.minOk ? `<p class="warn note">Nilai beli di bawah order minimal (Rp ${fi(S.cfg.minOrder)}). Cek batas minimal di aplikasi Ajaib.</p>` : ''}`;
   el.innerHTML = `<div class="card">
     <div class="row" style="justify-content:space-between;align-items:center">
-      <h3 style="margin:0">${esc(k)} · ${fx(v.price)} USDT <span class="note">(sumber ${esc(v.src)})</span></h3>
+      <h3 style="margin:0">${esc(k)} · ${S.kurs ? 'Rp ' + rp(v.price * S.kurs) + ' · ' : ''}${fx(v.price)} USDT <span class="note">(sumber ${esc(v.src)})</span></h3>
       <span class="badge ${v.vd.cls}" style="font-size:14px">${v.vd.ic} ${v.vd.t} · skor ${v.score.toFixed(0)}</span>
     </div>
     <p class="note">${kd.ok ? '<b class="good">Memenuhi syarat kandidat beli.</b>' : 'Belum memenuhi syarat kandidat beli: ' + esc(kd.alasan.join('; ')) + '.'} Potensi naik: <b>${esc(po.lbl)}</b> (${po.pts})${po.tags.length ? ' · ' + po.tags.map(t => `<span class="chip">${esc(t)}</span>`).join('') : ''}</p>
@@ -670,13 +782,21 @@ function renderScan() {
       <td>${r.score.toFixed(0)} <span class="note">${esc(r.vd)}</span></td><td class="${r.pts >= 65 ? 'good' : r.pts >= 45 ? 'warn' : ''}"><b>${r.pts}</b> ${esc(r.lbl)}</td>
       <td class="num">${r.vr == null ? '–' : r.vr.toFixed(1).replace('.', ',')}</td><td title="${esc((r.alasan || []).join('; '))}" class="${r.kand ? 'good' : 'warn'}">${r.kand ? 'Ya' : 'Belum'}</td>
       <td style="white-space:normal;min-width:200px">${r.tags.map(t => `<span class="chip">${esc(t)}</span>`).join('')}</td>
-      <td>${ada ? '<span class="note">dipantau</span>' : `<button class="seg" data-add="${esc(r.k)}">Pantau</button>`}</td></tr>`;
+      <td>${ada ? '<span class="note">dipantau</span>' : bisa('watchlist') ? `<button class="seg" data-add="${esc(r.k)}">Pantau</button>` : ''}</td></tr>`;
   });
   el.innerHTML = h + '</table>';
 }
 
 /* ---------- posisi & jurnal ---------- */
-function bersih(p, jual) { const fb = S.cfg.feeBeli / 100, fs = S.cfg.feeJual / 100; return jual * (1 - fs) / (p * (1 + fb)) - 1; }
+function hitungPos(r, price) {
+  const fb = S.cfg.feeBeli / 100, fs = S.cfg.feeJual / 100, kb = r.kurs || S.kurs, kn = S.kurs;
+  const modal = r.harga * r.jumlah * (1 + fb) * kb;               // uang keluar saat beli, termasuk fee & pajak
+  const nilai = price * r.jumlah * (1 - fs) * kn;                 // uang diterima bila dijual sekarang, bersih fee & pajak
+  const laba = nilai - modal;
+  return {modal, nilai, laba, pc: modal > 0 ? laba / modal : 0, beliRp: r.harga * kb, nowRp: price * kn,
+    impasRp: modal / (r.jumlah * (1 - fs)),
+    labaStop: r.stop ? r.stop * r.jumlah * (1 - fs) * kn - modal : null, labaTarget: r.target ? r.target * r.jumlah * (1 - fs) * kn - modal : null};
+}
 function statusPos(r, price) {
   if (r.stop && price <= r.stop) return ['STOP TERSENTUH', 'bad'];
   if (r.target && price >= r.target) return ['TARGET TERCAPAI', 'good'];
@@ -685,21 +805,42 @@ function statusPos(r, price) {
 }
 function renderPos() {
   const open = S.jr.filter(r => r.status === 'OPEN'), el = $('#posOut');
-  if (!open.length) { el.innerHTML = '<p class="note">Belum ada posisi terbuka. Catat pembelian di bagian Jurnal agar muncul di sini dan dipantau Telegram.</p>'; return; }
-  let tot = 0;
-  el.innerHTML = open.map(r => {
+  const real = S.jr.filter(r => r.status === 'CLOSED').reduce((a, r) => a + (r.hasilIdr || 0), 0), nTutup = S.jr.filter(r => r.status === 'CLOSED').length;
+  if (!open.length) { el.innerHTML = '<p class="note">Belum ada posisi terbuka. Catat pembelian di bagian Jurnal agar muncul di sini beserta untung/ruginya dan dipantau Telegram.</p>' + (nTutup ? `<p class="note">Hasil terealisasi dari ${nTutup} transaksi tertutup: <b class="${real >= 0 ? 'good' : 'bad'}">${rpTanda(real)}</b></p>` : ''); return; }
+  let tModal = 0, tNilai = 0, kartu = '';
+  open.forEach(r => {
     const v = S.views[r.kode], price = v && v.ok ? v.price : null;
-    if (price == null) return `<div class="pos"><b>${esc(r.kode)}</b> · harga sekarang belum tersedia. <button class="seg danger" data-tutup="${esc(r.id)}">Tutup</button></div>`;
-    const pc = bersih(r.harga, price), idr = pc * r.harga * r.jumlah * (r.kurs || S.kurs), st = statusPos(r, price); tot += idr;
-    return `<div class="pos"><div class="row" style="justify-content:space-between;align-items:center"><div><b>${esc(r.kode)}</b> · ${r.jumlah} koin · beli ${fx(r.harga)} (${esc(r.tglBeli)}) · skor ${v.score.toFixed(0)}</div>
+    if (price == null) { kartu += `<div class="pos"><b>${esc(r.kode)}</b> · harga sekarang belum tersedia. <button class="seg danger" data-tutup="${esc(r.id)}">Tutup</button></div>`; return; }
+    const h = hitungPos(r, price), st = statusPos(r, price); tModal += h.modal; tNilai += h.nilai;
+    kartu += `<div class="pos"><div class="row" style="justify-content:space-between;align-items:center">
+      <div><b style="font-size:16px">${esc(r.kode)}/IDR</b> · ${r.jumlah} koin · dibeli ${esc(r.tglBeli)} · skor robot ${v.score.toFixed(0)} <span class="badge ${v.vd.cls}">${v.vd.t}</span></div>
       <div><span class="badge ${st[1]}">${st[0]}</span> <button class="seg" data-tutup="${esc(r.id)}">Tutup posisi</button></div></div>
-      <div class="note">Sekarang ${fx(price)} USDT · stop ${r.stop ? fx(r.stop) : '–'} · target ${r.target ? fx(r.target) : '–'} ·
-      <b class="${pc >= 0 ? 'good' : 'bad'}">${pct(pc)} (≈ Rp ${fi(idr)})</b> bersih fee</div></div>`;
-  }).join('') + `<p class="note">Total untung/rugi mengambang: <b class="${tot >= 0 ? 'good' : 'bad'}">Rp ${fi(tot)}</b>. Perkiraan memakai kurs saat beli.</p>`;
+      <div style="font-size:22px;font-weight:700;margin:6px 0" class="${h.laba >= 0 ? 'good' : 'bad'}">${rpTanda(h.laba)} <span style="font-size:15px">(${pct(h.pc)})</span></div>
+      <table class="kv">
+        <tr><td>Modal keluar (termasuk fee &amp; pajak beli)</td><td class="num">Rp ${fi(h.modal)}</td></tr>
+        <tr><td>Nilai bila dijual sekarang (bersih fee &amp; pajak jual)</td><td class="num">Rp ${fi(h.nilai)}</td></tr>
+        <tr><td>Harga beli → harga sekarang</td><td class="num">Rp ${rp(h.beliRp)} → <b>Rp ${rp(h.nowRp)}</b></td></tr>
+        <tr><td>Harga impas (mulai untung setelah semua biaya)</td><td class="num">Rp ${rp(h.impasRp)} <span class="note">(${pct(h.impasRp / h.nowRp - 1)} dari sekarang)</span></td></tr>
+        <tr><td>Stop loss</td><td class="num bad">${r.stop ? 'Rp ' + rp(r.stop * S.kurs) + ' → ' + rpTanda(h.labaStop) : '–'}</td></tr>
+        <tr><td>Target</td><td class="num good">${r.target ? 'Rp ' + rp(r.target * S.kurs) + ' → ' + rpTanda(h.labaTarget) : '–'}</td></tr>
+      </table></div>`;
+  });
+  const lb = tNilai - tModal;
+  el.innerHTML = `<div class="kpis" style="margin-bottom:10px">
+    <div class="kpi"><b>Modal terpasang</b><span>Rp ${fi(tModal)}</span></div>
+    <div class="kpi"><b>Nilai sekarang (bersih fee)</b><span>Rp ${fi(tNilai)}</span></div>
+    <div class="kpi"><b>Untung/rugi mengambang</b><span class="${lb >= 0 ? 'good' : 'bad'}">${rpTanda(lb)} (${pct(tModal ? lb / tModal : 0)})</span></div>
+    <div class="kpi"><b>Terealisasi (${nTutup} transaksi)</b><span class="${real >= 0 ? 'good' : 'bad'}">${rpTanda(real)}</span></div>
+    <div class="kpi"><b>Total hasil</b><span class="${lb + real >= 0 ? 'good' : 'bad'}">${rpTanda(lb + real)}</span></div></div>` + kartu +
+    '<p class="note">Perkiraan memakai harga Binance × kurs. Untuk angka yang mendekati Ajaib, samakan kurs dengan harga Ajaib di kartu Kondisi pasar. Selisih spread kecil tetap mungkin ada.</p>';
+}
+function formJr() {
+  const kurs = S.kurs, idr = Number($('#jrIdr').value), stIdr = Number($('#jrStopIdr').value), tpIdr = Number($('#jrTpIdr').value);
+  return {kurs, idr, e: kurs ? idr / kurs : 0, q: Number($('#jrQ').value), st: kurs && stIdr ? stIdr / kurs : 0, tp: kurs && tpIdr ? tpIdr / kurs : 0, stIdr, tpIdr};
 }
 function jrAuto() {
   const k = $('#jrKode').value, v = S.views[k]; if (!v || !v.ok) return [];
-  const cfg = cfgMesin(), e = Number($('#jrE').value), q = Number($('#jrQ').value), st = Number($('#jrStop').value), kurs = S.kurs;
+  const cfg = cfgMesin(), f = formJr(), e = f.e, q = f.q, st = f.st, kurs = S.kurs;
   const s50 = v.I.sma50[v.n], rIdr = S.cfg.modal * S.cfg.risiko / 100, rpRisk = q && e && st ? q * (e - st) * kurs : null;
   return [
     [v.score >= cfg.entryTh, `Skor robot ${v.score.toFixed(0)} ≥ batas beli ${cfg.entryTh}`],
@@ -707,7 +848,7 @@ function jrAuto() {
     [v.rsi != null && v.rsi < 72, `RSI ${v.rsi == null ? '–' : v.rsi.toFixed(0)} belum terlalu panas (< 72)`],
     [S.ps.lvl !== 'LEMAH', `BTC tidak lemah (sekarang: ${S.ps.lvl})`],
     [rpRisk != null && st < e && rpRisk <= rIdr * 1.05, rpRisk == null ? 'Risiko sesuai aturan (isi harga, jumlah, stop)' : `Rugi bila stop kena ≈ Rp ${fi(rpRisk)} ≤ batas Rp ${fi(rIdr)}`],
-    [kurs && q && e ? q * e * kurs >= S.cfg.minOrder : false, 'Nilai order ≥ minimal Tokocrypto']];
+    [kurs && q && e ? q * e * kurs >= S.cfg.minOrder : false, 'Nilai order ≥ minimal Ajaib']];
 }
 function jrRender() {
   const auto = jrAuto(), man = ['#jrM1', '#jrM2', '#jrM3'].map(i => $(i).checked);
@@ -717,24 +858,34 @@ function jrRender() {
   return {lulus, tot};
 }
 function isiDariRencana() {
-  const k = $('#jrKode').value, v = S.views[k], pl = v && v.ok ? ENG.plan(v, cfgMesin(), S.kurs) : null; if (!pl) return;
-  $('#jrE').value = +pl.e.toPrecision(7); $('#jrIdr').value = Math.round(pl.e * S.kurs); $('#jrQ').value = pl.q; $('#jrStop').value = +pl.stop.toPrecision(7); $('#jrTp').value = +pl.t1.toPrecision(7);
+  const k = $('#jrKode').value, v = S.views[k]; if (!v || !v.ok || !S.kurs) return;
+  const a = v.I.atr[v.n]; if (a == null) return;
+  const f = formJr(), pl = ENG.plan(v, cfgMesin(), S.kurs), fb = S.cfg.feeBeli / 100;
+  const e = f.idr > 0 ? f.e : v.price;                                  // harga beli Anda; kosong = harga sekarang
+  let stop = e - S.cfg.atr * a; if (stop <= 0) stop = e * 0.5;
+  const risk = e - stop, t1 = e + 2 * risk;
+  const nom = Number($('#jrNom').value);
+  let q = nom > 0 ? nom / (e * S.kurs * (1 + fb)) : (pl ? pl.q : 0);
+  if (f.idr <= 0) $('#jrIdr').value = +(e * S.kurs).toPrecision(7);
+  $('#jrStopIdr').value = +(stop * S.kurs).toPrecision(7); $('#jrTpIdr').value = +(t1 * S.kurs).toPrecision(7);
+  if (q > 0) { $('#jrQ').value = +q.toPrecision(6); if (!(nom > 0)) $('#jrNom').value = Math.round(q * e * S.kurs * (1 + fb)); }
   jrRender();
 }
 function renderJurnal() {
   const sel = $('#jrKode'), cur = sel.value, ks = Object.keys(S.views).filter(k => S.views[k].ok && S.views[k].wl);
   sel.innerHTML = ks.map(k => `<option>${k}</option>`).join(''); if (ks.indexOf(cur) >= 0) sel.value = cur;
+  const kc = $('#kalKode'), kcur = kc.value; kc.innerHTML = ks.map(k => `<option>${k}</option>`).join(''); if (ks.indexOf(kcur) >= 0) kc.value = kcur;
   if (!$('#jrTgl').value) $('#jrTgl').value = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
   jrRender();
-  const rp = ENG.rapor(S.jr, S.cfg.masuk), tutup = S.jr.filter(r => r.status === 'CLOSED');
+  const rap = ENG.rapor(S.jr, S.cfg.masuk), tutup = S.jr.filter(r => r.status === 'CLOSED');
   const baris = (nama, s) => `<tr><td>${nama}</td><td class="num">${s.n}</td><td class="num">${s.win == null ? '–' : pct(s.win, 0).replace('+', '')}</td><td class="num">${s.exp == null ? '–' : pct(s.exp)}</td>
     <td class="num">${s.pf == null ? '–' : s.pf === Infinity ? '∞' : s.pf.toFixed(2).replace('.', ',')}</td><td class="num ${s.idr >= 0 ? 'good' : 'bad'}">Rp ${fi(s.idr)}</td></tr>`;
   $('#jrRapor').innerHTML = !tutup.length ? '<p class="note">Rapor muncul setelah ada transaksi yang ditutup.</p>' :
     `<div class="tblwrap"><table><tr><th>Kelompok</th><th class="num">Transaksi</th><th class="num">Menang</th><th class="num">Rata-rata hasil</th><th class="num">Profit factor</th><th class="num">Total</th></tr>
-    ${baris('Semua transaksi', rp.all)}${baris('Dibeli saat skor ≥ batas (sesuai sinyal)', rp.sesuai)}${baris('Dibeli saat skor di bawah batas', rp.tidak)}${baris('Daftar periksa lulus semua', rp.disiplin)}${baris('Daftar periksa tidak lengkap', rp.longgar)}</table></div>
+    ${baris('Semua transaksi', rap.all)}${baris('Dibeli saat skor ≥ batas (sesuai sinyal)', rap.sesuai)}${baris('Dibeli saat skor di bawah batas', rap.tidak)}${baris('Daftar periksa lulus semua', rap.disiplin)}${baris('Daftar periksa tidak lengkap', rap.longgar)}</table></div>
     <p class="note">Contoh kecil (kurang dari 20 transaksi) belum bisa disimpulkan. Bandingkan baris "sesuai sinyal" dengan "di bawah batas" untuk menilai apakah sinyal robot membantu.</p>`;
-  $('#jrHist').innerHTML = !tutup.length ? '<p class="note">Kosong.</p>' : `<table><tr><th>Koin</th><th>Beli</th><th>Jual</th><th class="num">Harga beli</th><th class="num">Harga jual</th><th class="num">Hasil</th><th class="num">Rp</th><th>Skor</th><th>Periksa</th><th></th></tr>` +
-    tutup.slice().reverse().map(r => `<tr><td>${esc(r.kode)}</td><td>${esc(r.tglBeli)}</td><td>${esc(r.tglJual)}</td><td class="num">${fx(r.harga)}</td><td class="num">${fx(r.hargaJual)}</td>
+  $('#jrHist').innerHTML = !tutup.length ? '<p class="note">Kosong.</p>' : `<table><tr><th>Koin</th><th>Beli</th><th>Jual</th><th class="num">Harga beli (Rp)</th><th class="num">Harga jual</th><th class="num">Hasil</th><th class="num">Untung/rugi (Rp)</th><th>Skor</th><th>Periksa</th><th></th></tr>` +
+    tutup.slice().reverse().map(r => `<tr><td>${esc(r.kode)}</td><td>${esc(r.tglBeli)}</td><td>${esc(r.tglJual)}</td><td class="num">${rp(r.harga * (r.kurs || S.kurs))}</td><td class="num">${fx(r.hargaJual)} <span class="note">USDT</span></td>
     <td class="num ${r.hasilPct >= 0 ? 'good' : 'bad'}">${pct(r.hasilPct)}</td><td class="num">${fi(r.hasilIdr)}</td><td>${r.skor == null ? '–' : r.skor.toFixed(0)}</td><td>${r.cekLulus}/${r.cekTotal}</td>
     <td><button class="seg danger" data-jhapus="${esc(r.id)}">Hapus</button></td></tr>`).join('') + '</table>';
 }
@@ -751,28 +902,79 @@ async function simpanCfg() {
   catch (e) { $('#cfgMsg').textContent = e.message; }
 }
 async function catatBeli() {
-  const msg = $('#jrMsg'), k = $('#jrKode').value, e = Number($('#jrE').value), q = Number($('#jrQ').value);
-  if (!k || !(e > 0) || !(q > 0)) { msg.textContent = 'Isi koin, harga beli, dan jumlah.'; return; }
+  const msg = $('#jrMsg'), k = $('#jrKode').value, f = formJr();
+  if (!k || !(f.e > 0) || !(f.q > 0)) { msg.textContent = 'Isi koin, harga beli (Rp), dan jumlah koin (atau nominal beli).'; return; }
   const c = jrRender(), v = S.views[k];
   try {
-    await api('jr_catat', {row: {kode: k, tglBeli: $('#jrTgl').value, harga: e, jumlah: q, stop: Number($('#jrStop').value) || 0, target: Number($('#jrTp').value) || 0, kurs: S.kurs,
+    await api('jr_catat', {row: {kode: k, tglBeli: $('#jrTgl').value, harga: f.e, jumlah: f.q, stop: f.st || 0, target: f.tp || 0, kurs: S.kurs,
       skor: v && v.ok ? +v.score.toFixed(1) : null, cekLulus: c.lulus, cekTotal: c.tot, alasan: $('#jrAlasan').value}});
-    msg.textContent = 'Tercatat.'; ['#jrE', '#jrIdr', '#jrQ', '#jrStop', '#jrTp', '#jrAlasan'].forEach(i => { $(i).value = ''; }); ['#jrM1', '#jrM2', '#jrM3'].forEach(i => { $(i).checked = false; });
+    msg.textContent = 'Tercatat. Lihat untung/rugi di "Posisi saya".'; ['#jrNom', '#jrIdr', '#jrQ', '#jrStopIdr', '#jrTpIdr', '#jrAlasan'].forEach(i => { $(i).value = ''; }); ['#jrM1', '#jrM2', '#jrM3'].forEach(i => { $(i).checked = false; });
     await muat();
   } catch (x) { msg.textContent = x.message; }
 }
 async function tutupPos(id) {
   const r = S.jr.find(x => x.id === id); if (!r) return;
-  const v = S.views[r.kode], def = v && v.ok ? +v.price.toPrecision(7) : '';
-  const s = window.prompt('Harga jual ' + r.kode + ' dalam USDT (kalau jual lewat pasangan Rp, bagi dengan kurs ' + fi(S.kurs) + '):', def); if (s == null) return;
-  const hj = Number(String(s).replace(',', '.')); if (!(hj > 0)) { alert('Harga jual tidak valid.'); return; }
+  const v = S.views[r.kode], def = v && v.ok && S.kurs ? (v.price * S.kurs >= 1000 ? String(Math.round(v.price * S.kurs)) : String(+(v.price * S.kurs).toPrecision(5)).replace('.', ',')) : '';
+  const s = window.prompt('Harga jual ' + r.kode + ' per koin di Ajaib (Rp):', def); if (s == null) return;
+  const rpJual = Number(String(s).replace(/\./g, '').replace(',', '.')); if (!(rpJual > 0) || !S.kurs) { alert('Harga jual tidak valid.'); return; }
   const al = window.prompt('Alasan menutup posisi (opsional):', '') || '';
-  try { await api('jr_tutup', {id, hargaJual: hj, alasan: al}); await muat(); } catch (e) { alert(e.message); }
+  try { await api('jr_tutup', {id, hargaJual: rpJual / S.kurs, kursJual: S.kurs, alasan: al}); await muat(); } catch (e) { alert(e.message); }
 }
+async function kalibrasi(auto) {
+  const m = $('#kalMsg');
+  try {
+    if (auto) { await api('cfg', {cfg: {kursManual: 0}}); m.textContent = 'Kembali ke kurs otomatis.'; await muat(); return; }
+    const k = $('#kalKode').value, v = S.views[k], harga = Number($('#kalRp').value);
+    if (!v || !v.ok || !(harga > 0)) { m.textContent = 'Pilih koin dan isi harga Rp dari aplikasi Ajaib.'; return; }
+    const kurs = Math.round(harga / v.price * 100) / 100;
+    if (kurs < 1000 || kurs > 100000) { m.textContent = 'Hasil kurs tidak masuk akal (' + fi(kurs) + '). Periksa harga yang diisi.'; return; }
+    await api('cfg', {cfg: {kursManual: kurs}}); m.textContent = 'Kurs disamakan: Rp ' + fi(kurs) + ' per USDT.'; $('#kalRp').value = ''; await muat();
+  } catch (e) { m.textContent = e.message; }
+}
+
+/* ---------- admin ---------- */
+async function muatAdmin() {
+  try { S.adm = await api('adm_daftar'); renderAdmin(); } catch (e) { $('#admHasil').innerHTML = `<p class="bad note">${esc(e.message)}</p>`; }
+}
+function izinBoxes(pref, pilih) {
+  return S.adm.izin.map(i => `<label class="chk"><input type="checkbox" data-${pref}="${i}" ${pilih.indexOf(i) >= 0 ? 'checked' : ''}> ${esc(IZIN_NAMA[i] || i)}</label>`).join('');
+}
+function renderAdmin() {
+  const a = S.adm; if (!a) return;
+  $('#admBotInfo').textContent = a.bot.ada ? 'Bot terpasang' + (a.bot.nama ? ': @' + a.bot.nama : '') + '.' : 'Belum ada bot. Buat bot lewat @BotFather di Telegram, salin token, tempel di bawah.';
+  if (!$('#admPeran').options.length) {
+    $('#admPeran').innerHTML = Object.keys(a.peran).map(p => `<option value="${p}">${p}</option>`).join('') + '<option value="kustom">kustom</option>';
+    $('#admPeran').value = 'trader'; $('#admIzin').innerHTML = izinBoxes('nizin', a.peran.trader);
+  }
+  let h = '<tr><th>Pengguna</th><th>Izin akses</th><th>Status</th><th>Login terakhir</th><th>Aksi</th></tr>';
+  a.pengguna.forEach(u => {
+    const diri = S.user && u.id === S.user.id;
+    h += `<tr class="${u.aktif ? '' : 'nonaktif'}"><td><b>${esc(u.nama)}</b><div class="note">${esc(u.username)} · ${esc(u.peran)}${u.punyaChat ? ' · Telegram' : ''}</div></td>
+      <td style="white-space:normal;min-width:260px"><div class="izinbox" data-urow="${esc(u.id)}">${izinBoxes('uizin', u.izin)}</div></td>
+      <td>${u.aktif ? '<span class="badge good">Aktif</span>' : '<span class="badge bad">Nonaktif</span>'}${u.wajibGanti ? '<div class="note">belum ganti sandi</div>' : ''}</td>
+      <td class="note">${esc(u.loginTerakhir || '–')}</td>
+      <td style="white-space:normal"><button class="seg" data-usimpan="${esc(u.id)}">Simpan izin</button>
+        <button class="seg" data-ureset="${esc(u.id)}">Reset sandi</button>
+        ${diri ? '' : `<button class="seg" data-utoggle="${esc(u.id)}" data-aktif="${u.aktif ? 0 : 1}">${u.aktif ? 'Nonaktifkan' : 'Aktifkan'}</button> <button class="seg danger" data-uhapus="${esc(u.id)}">Hapus</button>`}</td></tr>`;
+  });
+  $('#admTbl').innerHTML = h;
+}
+function tampilSandi(judul, username, sandi) {
+  $('#admHasil').innerHTML = `<div class="pos"><b>${esc(judul)}</b><p class="note" style="margin:6px 0">Username: <b>${esc(username)}</b>. Sandi sementara (hanya tampil sekarang, salin dan berikan lewat jalur pribadi):</p><span class="sandibox">${esc(sandi)}</span></div>`;
+}
+async function admAksi(a, body, sukses) {
+  try { const j = await api(a, body); if (sukses) sukses(j); await muatAdmin(); }
+  catch (e) { $('#admHasil').innerHTML = `<p class="bad note">${esc(e.message)}</p>`; }
+}
+function izinTerpilih(sel) { return Array.from(document.querySelectorAll(sel)).filter(i => i.checked).map(i => i.dataset.nizin || i.dataset.uizin); }
 
 /* ---------- event ---------- */
 document.addEventListener('click', async ev => {
-  const t = ev.target.closest('[data-del],[data-add],[data-tutup],[data-jhapus],[data-range],tr[data-k]'); if (!t) return;
+  const t = ev.target.closest('[data-del],[data-add],[data-tutup],[data-jhapus],[data-range],[data-usimpan],[data-ureset],[data-utoggle],[data-uhapus],tr[data-k]'); if (!t) return;
+  if (t.dataset.usimpan) { const id = t.dataset.usimpan, izin = Array.from(document.querySelectorAll(`[data-urow="${id}"] input`)).filter(i => i.checked).map(i => i.dataset.uizin); return admAksi('adm_ubah', {id, izin}, () => { $('#admHasil').innerHTML = '<p class="good note">Izin tersimpan. Berlaku pada permintaan berikutnya pengguna itu.</p>'; }); }
+  if (t.dataset.ureset) { if (!confirm('Reset sandi pengguna ini? Semua sesi aktifnya akan keluar.')) return; return admAksi('adm_reset', {id: t.dataset.ureset}, j => tampilSandi('Sandi direset', j.username, j.sandiSementara)); }
+  if (t.dataset.utoggle) { const on = t.dataset.aktif === '1'; if (!on && !confirm('Nonaktifkan pengguna ini? Ia langsung tidak bisa masuk.')) return; return admAksi('adm_ubah', {id: t.dataset.utoggle, aktif: on}, () => { $('#admHasil').innerHTML = ''; }); }
+  if (t.dataset.uhapus) { if (!confirm('Hapus pengguna ini BESERTA watchlist, pengaturan, dan jurnalnya? Tidak bisa dibatalkan.')) return; return admAksi('adm_hapus', {id: t.dataset.uhapus}, () => { $('#admHasil').innerHTML = '<p class="good note">Pengguna dihapus.</p>'; }); }
   if (t.dataset.del) { if (!confirm('Hapus ' + t.dataset.del + ' dari watchlist?')) return; try { await api('hapus', {k: t.dataset.del}); await muat(); } catch (e) { setMsg(e.message, true); } return; }
   if (t.dataset.add) { try { await api('tambah', {k: t.dataset.add}); await muat(); S.sel = t.dataset.add; renderAll(); } catch (e) { $('#scanMsg').textContent = e.message; } return; }
   if (t.dataset.tutup) return tutupPos(t.dataset.tutup);
@@ -780,25 +982,46 @@ document.addEventListener('click', async ev => {
   if (t.dataset.range) { S.range = Number(t.dataset.range); renderDetail(); return; }
   if (t.dataset.k && !ev.target.closest('button')) { S.sel = t.dataset.k; renderWatch(); renderDetail(); const d = $('#detail'); if (d && !d.hidden) d.scrollIntoView({behavior: 'smooth', block: 'start'}); }
 });
-document.addEventListener('change', ev => { if (ev.target.id === 'chk200') { S.sma200 = ev.target.checked; renderDetail(); } if (ev.target.id === 'scanKand') renderScan(); });
+document.addEventListener('change', ev => {
+  if (ev.target.id === 'chk200') { S.sma200 = ev.target.checked; renderDetail(); }
+  if (ev.target.id === 'scanKand') renderScan();
+  if (ev.target.id === 'admPeran' && S.adm) { const p = S.adm.peran[ev.target.value]; if (p) document.querySelectorAll('#admIzin input').forEach(i => { i.checked = p.indexOf(i.dataset.nizin) >= 0; }); }
+});
 document.addEventListener('input', ev => {
-  if (ev.target.id === 'jrIdr' && S.kurs) { $('#jrE').value = +(Number(ev.target.value) / S.kurs).toPrecision(7) || ''; }
-  if (['jrE', 'jrQ', 'jrStop', 'jrKode', 'jrM1', 'jrM2', 'jrM3'].indexOf(ev.target.id) >= 0) { if (ev.target.id === 'jrE') $('#jrIdr').value = S.kurs ? Math.round(Number(ev.target.value) * S.kurs) || '' : ''; jrRender(); }
+  const id = ev.target.id, fb = (S.cfg.feeBeli || 0) / 100;
+  if (id === 'jrNom' || id === 'jrIdr') { const n = Number($('#jrNom').value), h = Number($('#jrIdr').value); if (n > 0 && h > 0) $('#jrQ').value = +(n / (h * (1 + fb))).toPrecision(6); }
+  if (id === 'jrQ') { const q = Number($('#jrQ').value), h = Number($('#jrIdr').value); if (q > 0 && h > 0) $('#jrNom').value = Math.round(q * h * (1 + fb)); }
+  if (['jrNom', 'jrIdr', 'jrQ', 'jrStopIdr', 'jrTpIdr', 'jrKode', 'jrM1', 'jrM2', 'jrM3'].indexOf(id) >= 0) jrRender();
 });
 $('#kode').addEventListener('keydown', e => { if (e.key === 'Enter') tambah(); });
-$('#btnTambah').onclick = tambah; $('#btnMuat').onclick = muat; $('#btnCfg').onclick = simpanCfg; $('#jrSimpan').onclick = catatBeli; $('#jrIsi').onclick = isiDariRencana;
+$('#btnTambah').onclick = tambah; $('#btnMuat').onclick = muat; $('#btnCfg').onclick = simpanCfg; $('#kalOk').onclick = () => kalibrasi(false); $('#kalAuto').onclick = () => kalibrasi(true); $('#jrSimpan').onclick = catatBeli; $('#jrIsi').onclick = isiDariRencana;
 $('#btnScan').onclick = () => pindai(false); $('#btnScanBaru').onclick = () => pindai(true);
-$('#btnTg').onclick = async () => { try { await api('tg_tes'); setMsg('Pesan percobaan terkirim. Cek Telegram Anda.', false); } catch (e) { setMsg(e.message, true); } };
-$('#pinOk').onclick = () => { S.pin = $('#pinIn').value; try { localStorage.setItem('rk_pin', S.pin); } catch (e) {} muat(); };
-$('#pinIn').addEventListener('keydown', e => { if (e.key === 'Enter') $('#pinOk').click(); });
+$('#btnTgSimpan').onclick = async () => { try { const j = await api('tg_set', {chatId: $('#tgChat').value}); S.data.tg.chatId = j.chatId; $('#tgMsg').textContent = 'Tersimpan.'; } catch (e) { $('#tgMsg').textContent = e.message; } };
+$('#btnTg').onclick = async () => { try { await api('tg_tes'); $('#tgMsg').textContent = 'Pesan percobaan terkirim. Cek Telegram Anda.'; } catch (e) { $('#tgMsg').textContent = e.message; } };
+$('#authOk').onclick = authKirim;
+document.querySelectorAll('#authCard input').forEach(i => i.addEventListener('keydown', e => { if (e.key === 'Enter') authKirim(); }));
+$('#btnKeluar').onclick = () => keluar('');
+$('#btnSandi').onclick = () => tampilAuth('ganti', '');
+$('#admBuat').onclick = () => {
+  const izin = izinTerpilih('#admIzin input');
+  admAksi('adm_buat', {nama: $('#admNama').value, username: $('#admUser').value, izin}, j => { tampilSandi('Pengguna dibuat', j.username, j.sandiSementara); $('#admNama').value = $('#admUser').value = ''; $('#admMsg').textContent = ''; });
+};
+$('#admBotSimpan').onclick = () => admAksi('adm_bot', {token: $('#admBotTok').value}, () => { $('#admBotTok').value = ''; $('#admBotMsg').textContent = 'Bot tersimpan.'; muat(); });
+$('#admBotHapus').onclick = () => { if (confirm('Lepas bot Telegram? Semua alert berhenti.')) admAksi('adm_bot', {token: ''}, () => { $('#admBotMsg').textContent = 'Bot dilepas.'; muat(); }); };
 $('#btnTema').onclick = () => { const r = document.documentElement, t = r.dataset.theme === 'dark' ? 'light' : 'dark'; r.dataset.theme = t; try { localStorage.setItem('rk_tema', t); } catch (e) {} renderDetail(); };
 window.addEventListener('resize', () => { const v = S.views[S.sel]; if (v && v.ok) renderDetail(); });
 
 /* ---------- mulai ---------- */
 (function () {
-  try { const t = localStorage.getItem('rk_tema'); if (t) document.documentElement.dataset.theme = t; S.pin = localStorage.getItem('rk_pin') || ''; } catch (e) {}
-  if (!apiSiap()) { $('#appView').hidden = true; $('#pinCard').hidden = false; $('#pinCard').querySelector('h3').textContent = 'Halaman belum tersambung'; $('#pinCard').querySelector('.row').hidden = true; $('#pinErr').textContent = 'API_URL di file index.html belum diisi dengan URL Web App Apps Script (lihat panduan pemasangan).'; return; }
-  $('#appView').hidden = false; muat();
+  try { const t = localStorage.getItem('rk_tema'); if (t) document.documentElement.dataset.theme = t; S.tok = localStorage.getItem('rk_tok') || ''; } catch (e) {}
+  if (!apiSiap()) { $('#appView').hidden = true; $('#authCard').hidden = false; $('#authCard').querySelector('h3').textContent = 'Halaman belum tersambung'; $('#authCard').querySelector('.col').hidden = true; $('#authInfo').textContent = ''; $('#authErr').textContent = 'API_URL di file index.html belum diisi dengan URL Web App Apps Script (lihat panduan pemasangan).'; return; }
+  (async function () {
+    try {
+      if (S.tok) { await muat(); if (S.user || !$('#authCard').hidden) return; }
+      const st = await api('status');
+      tampilAuth(st.perluSetup ? 'setup' : 'login', '');
+    } catch (e) { if ($('#authCard').hidden) { tampilAuth('login', e.message); } else if (!$('#authErr').textContent) $('#authErr').textContent = e.message; }
+  })();
 })();
 </script>
 </body>

@@ -117,6 +117,14 @@ tr.nonaktif td{opacity:.55}
     <div class="note">Harga di Ajaib sedikit berbeda dari harga Binance × kurs. Isi harga satu koin persis seperti di aplikasi Ajaib; robot menghitung ulang kurs sehingga semua harga Rp dan untung/rugi mendekati angka di Ajaib.</div>
   </div>
 
+  <div class="card" id="wlCard" hidden>
+    <h3>Portofolio &amp; rekomendasi (koin yang Anda miliki di atas)</h3>
+    <p class="note" style="margin-top:0">Tiap koin menampilkan modal beli, nilai sekarang, untung/rugi bersih fee, dan <b>keputusan</b> robot: TAHAN, WASPADA, PERTIMBANGKAN JUAL, AMBIL UNTUNG, JUAL (STOP), atau BOLEH BELI. Arahkan kursor/tekan lama pada keputusan untuk melihat alasannya. Klik baris untuk grafik dan rencana.</p>
+    <div class="tblwrap"><table id="wl"></table></div>
+  </div>
+
+  <section id="detail" hidden></section>
+
   <div class="card" data-izin="watchlist,pindai">
     <h3>Watchlist koin</h3>
     <div class="row">
@@ -135,12 +143,6 @@ tr.nonaktif td{opacity:.55}
     <div class="note" style="margin-top:6px">Fee bawaan = tarif taker Ajaib Kripto pasangan IDR (beli ±0,233%, jual ±0,443% sudah termasuk pajak PPh 22 dan biaya SRO). Cocokkan dengan rincian biaya di aplikasi Ajaib bila tarifnya berubah. Kurs USDT/IDR otomatis bila kolom kurs manual 0; untuk menyamakan dengan harga di Ajaib, pakai kotak "Samakan dengan harga Ajaib" di atas.</div>
   </div>
 
-  <div class="card" id="wlCard" hidden>
-    <h3>Rekomendasi hari ini (urut skor tertinggi)</h3>
-    <div class="tblwrap"><table id="wl"></table></div>
-  </div>
-
-  <section id="detail" hidden></section>
 
   <div class="card" data-izin="pindai">
     <h3>Pemindai potensi naik (28 koin besar)</h3>
@@ -627,7 +629,26 @@ function cfgMesin() {
   return {cap: c.modal, riskPct: c.risiko, atrMult: c.atr, entryTh: c.masuk, exitTh: c.keluar, feeB: c.feeBeli / 100, feeS: c.feeJual / 100,
     alokasi: c.alokasi, minOrder: c.minOrder, minLiq: c.minLiqJuta * 1e6, ketatPasar: !!c.ketatPasar};
 }
-function urutan() { return Object.keys(S.views).filter(k => S.views[k].wl && S.views[k].ok).sort((a, b) => S.views[b].score - S.views[a].score); }
+function dimiliki() { const o = {}; S.jr.filter(r => r.status === 'OPEN').forEach(r => { (o[r.kode] = o[r.kode] || []).push(r); }); return o; }
+function urutan() {
+  const mil = dimiliki();
+  return Object.keys(S.views).filter(k => S.views[k].ok && (S.views[k].wl || mil[k])).sort((a, b) => (mil[b] ? 1 : 0) - (mil[a] ? 1 : 0) || S.views[b].score - S.views[a].score);
+}
+// ringkasan posisi per koin + keputusan jual/tahan/beli
+function ringkasKoin(k, rows, v, kd) {
+  if (!rows) {
+    const ok = kd.ok; return {ada: false, aksi: ok ? 'BOLEH BELI' : 'BELUM', cls: ok ? 'good' : 'warn', alasan: ok ? 'Memenuhi semua syarat kandidat beli.' : (kd.alasan || []).join('; ')};
+  }
+  let modal = 0, nilai = 0, jml = 0, rank = 0, why = '';
+  rows.forEach(r => {
+    const h = hitungPos(r, v.price); modal += h.modal; nilai += h.nilai; jml += r.jumlah;
+    const st = statusPos(r, v.price)[0];
+    const lv = st === 'STOP TERSENTUH' ? 4 : st === 'TARGET TERCAPAI' ? 3 : v.score <= S.cfg.keluar ? 2 : st === 'Dekat stop' ? 1 : 0;
+    if (lv > rank) { rank = lv; why = st; }
+  });
+  const m = [['TAHAN', 'good', 'Harga masih di antara stop dan target, skor di atas batas keluar.'], ['WASPADA', 'warn', 'Harga dekat stop.'], ['PERTIMBANGKAN JUAL', 'warn', 'Skor robot turun ke batas keluar (' + S.cfg.keluar + ') atau lebih rendah.'], ['AMBIL UNTUNG', 'good', 'Target tercapai: pertimbangkan jual sebagian atau naikkan stop.'], ['JUAL (STOP)', 'bad', 'Harga menyentuh stop loss: ikuti rencana, keluar.']][rank];
+  return {ada: true, modal, nilai, jml, laba: nilai - modal, pc: modal > 0 ? (nilai - modal) / modal : 0, aksi: m[0], cls: m[1], alasan: m[2]};
+}
 
 /* ---------- render ---------- */
 function renderAll() { renderPasar(); renderCfg(); renderWatch(); renderDetail(); renderScan(); renderPos(); renderJurnal(); renderTg(); }
@@ -666,17 +687,22 @@ function meter(v) {
 }
 function renderWatch() {
   const ks = urutan(), tbl = $('#wl'); $('#wlCard').hidden = !ks.length && !S.data.gagal.length;
-  const cfg = cfgMesin();
-  let h = '<tr><th>Koin</th><th class="num">Harga (Rp)</th><th class="num">Harga (USDT)</th><th class="num">24j</th><th class="num">7h</th><th>Skor</th><th>Sinyal</th><th class="num">RSI</th><th>Kandidat?</th><th></th></tr>';
+  const cfg = cfgMesin(), mil = dimiliki(), jr = bisa('jurnal'), nCol = jr ? 11 : 9;
+  let h = '<tr><th>Koin</th><th class="num">Harga (Rp)</th><th class="num">24j</th><th class="num">7h</th><th>Skor</th><th>Sinyal</th>' +
+    (jr ? '<th class="num">Modal beli (Rp)</th><th class="num">Nilai sekarang (Rp)</th><th class="num">Untung/rugi</th>' : '') + '<th>Keputusan</th><th></th></tr>';
+  let tM = 0, tN = 0;
   ks.forEach(k => {
-    const v = S.views[k], kd = ENG.kandidat(v, cfg, S.ps);
-    h += `<tr data-k="${k}" tabindex="0" class="${k === S.sel ? 'sel' : ''}"><td><b>${k}</b></td><td class="num"><b>${S.kurs ? rp(v.price * S.kurs) : '–'}</b></td><td class="num">${fx(v.price)}</td>
+    const v = S.views[k], kd = ENG.kandidat(v, cfg, S.ps), r = ringkasKoin(k, mil[k], v, kd);
+    if (r.ada) { tM += r.modal; tN += r.nilai; }
+    const aksi = (jr ? `<button class="seg primary" data-beli="${k}" title="Catat pembelian ${k}">+ Beli</button> ` : '') + (!r.ada && bisa('watchlist') ? `<button class="seg danger" data-del="${k}" title="Hapus dari watchlist">Hapus</button>` : '');
+    h += `<tr data-k="${k}" tabindex="0" class="${k === S.sel ? 'sel' : ''}"><td><b>${k}</b></td><td class="num"><b>${S.kurs ? rp(v.price * S.kurs) : '–'}</b></td>
       <td class="num ${v.chg24 >= 0 ? 'good' : 'bad'}">${pct(v.chg24)}</td><td class="num ${v.chg7 >= 0 ? 'good' : 'bad'}">${pct(v.chg7)}</td>
-      <td>${meter(v.score)}${v.score.toFixed(0)}</td><td><span class="badge ${v.vd.cls}">${v.vd.ic} ${v.vd.t}</span></td><td class="num">${v.rsi == null ? '–' : v.rsi.toFixed(0)}</td>
-      <td title="${esc(kd.alasan.join('; '))}" class="${kd.ok ? 'good' : 'warn'}">${kd.ok ? 'Ya' : 'Belum'}</td>
-      <td>${bisa('watchlist') ? `<button class="seg danger" data-del="${k}" title="Hapus dari watchlist">Hapus</button>` : ''}</td></tr>`;
+      <td>${meter(v.score)}${v.score.toFixed(0)}</td><td><span class="badge ${v.vd.cls}">${v.vd.ic} ${v.vd.t}</span></td>` +
+      (jr ? (r.ada ? `<td class="num">${fi(r.modal)}</td><td class="num">${fi(r.nilai)}</td><td class="num ${r.laba >= 0 ? 'good' : 'bad'}"><b>${rpTanda(r.laba)}</b><div class="note ${r.laba >= 0 ? 'good' : 'bad'}">${pct(r.pc)}</div></td>` : '<td class="num note">–</td><td class="num note">–</td><td class="num note">–</td>') : '') +
+      `<td title="${esc(r.alasan)}"><span class="badge ${r.cls}">${r.aksi}</span></td><td>${aksi}</td></tr>`;
   });
-  S.data.gagal.forEach(k => { h += `<tr><td><b>${esc(k)}</b></td><td colspan="9" class="bad">Data gagal diambil atau kurang dari 40 hari.</td></tr>`; });
+  if (jr && tM > 0) h += `<tr><td colspan="6"><b>Total semua posisi</b></td><td class="num"><b>${fi(tM)}</b></td><td class="num"><b>${fi(tN)}</b></td><td class="num ${tN - tM >= 0 ? 'good' : 'bad'}"><b>${rpTanda(tN - tM)}</b><div class="note">${pct(tN / tM - 1)}</div></td><td colspan="2"></td></tr>`;
+  S.data.gagal.forEach(k => { h += `<tr><td><b>${esc(k)}</b></td><td colspan="${nCol - 1}" class="bad">Data gagal diambil atau kurang dari 40 hari.</td></tr>`; });
   tbl.innerHTML = h;
 }
 function renderDetail() {
@@ -970,7 +996,12 @@ function izinTerpilih(sel) { return Array.from(document.querySelectorAll(sel)).f
 
 /* ---------- event ---------- */
 document.addEventListener('click', async ev => {
-  const t = ev.target.closest('[data-del],[data-add],[data-tutup],[data-jhapus],[data-range],[data-usimpan],[data-ureset],[data-utoggle],[data-uhapus],tr[data-k]'); if (!t) return;
+  const t = ev.target.closest('[data-del],[data-add],[data-tutup],[data-jhapus],[data-range],[data-beli],[data-usimpan],[data-ureset],[data-utoggle],[data-uhapus],tr[data-k]'); if (!t) return;
+  if (t.dataset.beli) {
+    const k = t.dataset.beli, d = $('#jrForm'), v = S.views[k]; d.open = true; $('#jrKode').value = k;
+    if (!$('#jrIdr').value && v && v.ok && S.kurs) $('#jrIdr').value = Math.round(v.price * S.kurs);
+    jrRender(); d.scrollIntoView({behavior: 'smooth', block: 'center'}); $('#jrNom').focus(); return;
+  }
   if (t.dataset.usimpan) { const id = t.dataset.usimpan, izin = Array.from(document.querySelectorAll(`[data-urow="${id}"] input`)).filter(i => i.checked).map(i => i.dataset.uizin); return admAksi('adm_ubah', {id, izin}, () => { $('#admHasil').innerHTML = '<p class="good note">Izin tersimpan. Berlaku pada permintaan berikutnya pengguna itu.</p>'; }); }
   if (t.dataset.ureset) { if (!confirm('Reset sandi pengguna ini? Semua sesi aktifnya akan keluar.')) return; return admAksi('adm_reset', {id: t.dataset.ureset}, j => tampilSandi('Sandi direset', j.username, j.sandiSementara)); }
   if (t.dataset.utoggle) { const on = t.dataset.aktif === '1'; if (!on && !confirm('Nonaktifkan pengguna ini? Ia langsung tidak bisa masuk.')) return; return admAksi('adm_ubah', {id: t.dataset.utoggle, aktif: on}, () => { $('#admHasil').innerHTML = ''; }); }

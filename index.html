@@ -116,7 +116,7 @@ tr.nonaktif td{opacity:.55}
     <div class="row" data-izin="pengaturan" style="margin-top:10px;align-items:flex-end">
       <label>Samakan dengan harga Ajaib: koin <select id="kalKode"></select></label>
       <label>Harga di Ajaib (Rp) <input type="number" id="kalRp" min="0" step="any" inputmode="decimal" placeholder="lihat di aplikasi Ajaib"></label>
-      <button id="kalOk">Samakan kurs</button><button id="kalAuto" title="Kembali memakai kurs otomatis">Kurs otomatis</button>
+      <button id="kalOk">Samakan kurs</button><button id="kalPrem" title="Hanya mencatat selisih harga koin ini vs harga global, kurs tidak diubah">Catat selisih saja</button><button id="kalAuto" title="Kembali memakai kurs otomatis">Kurs otomatis</button>
       <span class="note" id="kalMsg" role="status"></span>
     </div>
     <div class="note">Harga di Ajaib sedikit berbeda dari harga Binance × kurs. Isi harga satu koin persis seperti di aplikasi Ajaib; robot menghitung ulang kurs sehingga semua harga Rp dan untung/rugi mendekati angka di Ajaib.</div>
@@ -486,17 +486,18 @@ const ENG = (function () {
   }
 
   /* ---------- backtest ---------- */
-  function backtest(d, I, cfg) {
-    const n = d.c.length, start = 34;
+  // cfg.slip = perkiraan selisih harga tiap sisi (pecahan, mis. 0.003 = 0,3%). Beli lebih mahal, jual lebih murah.
+  function backtest1(d, I, cfg) {
+    const n = d.c.length, start = 34, sl = cfg.slip || 0;
     let cash = 1, pos = null, pb = false, ps = false, blocked = false, inBars = 0, atrPend = 0;
     const trades = [], eq = [];
     const sell = (i, px, why) => {
-      const proceeds = pos.sh * px * (1 - cfg.feeS);
-      trades.push({iIn: pos.i, iOut: i, pIn: pos.px, pOut: px, ret: proceeds / pos.cash0 - 1, why});
+      const px2 = px * (1 - sl), proceeds = pos.sh * px2 * (1 - cfg.feeS);
+      trades.push({iIn: pos.i, iOut: i, pIn: pos.px, pOut: px2, ret: proceeds / pos.cash0 - 1, why});
       cash = proceeds; pos = null;
     };
     for (let i = start; i < n; i++) {
-      if (pb && !pos) { pos = {i, px: d.o[i], sh: cash * (1 - cfg.feeB) / d.o[i], cash0: cash, stop: d.o[i] - cfg.atrMult * atrPend}; cash = 0; }
+      if (pb && !pos) { const px = d.o[i] * (1 + sl); pos = {i, px, sh: cash * (1 - cfg.feeB) / px, cash0: cash, stop: d.o[i] - cfg.atrMult * atrPend}; cash = 0; }
       pb = false;
       if (ps && pos) sell(i, d.o[i], 'sinyal keluar');
       ps = false;
@@ -511,7 +512,7 @@ const ENG = (function () {
       }
     }
     let open = null;
-    if (pos) open = {iIn: pos.i, pIn: pos.px, ret: pos.sh * d.c[n - 1] * (1 - cfg.feeS) / pos.cash0 - 1};
+    if (pos) open = {iIn: pos.i, pIn: pos.px, ret: pos.sh * d.c[n - 1] * (1 - sl) * (1 - cfg.feeS) / pos.cash0 - 1};
     const total = eq.length ? eq[eq.length - 1] - 1 : 0;
     const bh = d.c[n - 1] / d.c[start] * (1 - cfg.feeB) * (1 - cfg.feeS) - 1;
     let peak = 1, mdd = 0; for (const e of eq) { peak = Math.max(peak, e); mdd = Math.min(mdd, e / peak - 1); }
@@ -520,7 +521,99 @@ const ENG = (function () {
     return {trades, open, total, bh, mdd, n: trades.length,
       win: trades.length ? wins.length / trades.length : null,
       avgW: wins.length ? gw / wins.length : null, avgL: loss.length ? -gl / loss.length : null,
-      pf: gl > 0 ? gw / gl : (gw > 0 ? Infinity : null), expo: eq.length ? inBars / eq.length : 0, start};
+      pf: gl > 0 ? gw / gl : (gw > 0 ? Infinity : null), expo: eq.length ? inBars / eq.length : 0, start,
+      exp: trades.length ? trades.reduce((a, t) => a + t.ret, 0) / trades.length : null};
+  }
+  // Hasil BERSIH (fee + slippage) dan KOTOR (tanpa biaya) berdampingan, plus penilaian apakah strategi masih layak.
+  function backtest(d, I, cfg) {
+    const net = backtest1(d, I, cfg), kotor = backtest1(d, I, Object.assign({}, cfg, {feeB: 0, feeS: 0, slip: 0}));
+    const biaya = net.n ? (cfg.feeB + cfg.feeS + 2 * (cfg.slip || 0)) : 0; // biaya bolak-balik per transaksi
+    let layak, why;
+    if (net.n < 3) { layak = 'DATA KURANG'; why = 'Hanya ' + net.n + ' transaksi; terlalu sedikit untuk dinilai.'; }
+    else if (net.total <= 0 && kotor.total > 0) { layak = 'TIDAK LAYAK'; why = 'Untung di atas kertas (' + pct(kotor.total) + ') hilang setelah biaya (' + pct(net.total) + ').'; }
+    else if (net.total <= 0) { layak = 'TIDAK LAYAK'; why = 'Rugi bahkan sebelum biaya (' + pct(kotor.total) + ').'; }
+    else if (net.total < net.bh) { layak = 'LEMAH'; why = 'Untung bersih ' + pct(net.total) + ' tetapi kalah dari beli & tahan (' + pct(net.bh) + ').'; }
+    else if (net.exp != null && net.exp < 2 * biaya) { layak = 'TIPIS'; why = 'Rata-rata untung per transaksi (' + pct(net.exp) + ') kurang dari 2× biaya bolak-balik (' + pct(2 * biaya) + ').'; }
+    else { layak = 'LAYAK'; why = 'Untung bersih ' + pct(net.total) + ' setelah biaya dan mengalahkan beli & tahan (' + pct(net.bh) + ').'; }
+    return Object.assign({}, net, {kotor: kotor.total, kotorN: kotor.n, biaya, seret: kotor.total - net.total, layak, layakWhy: why});
+  }
+
+  /* ---------- analisa jangka pendek 4 jam ---------- */
+  const H4 = 14400000;
+  // raw4 = {t:[satuan 4 jam sejak 1970], o,h,l,c,v}
+  function expand4(r) { return {t: r.t.map(x => x * H4), o: r.o.slice(), h: r.h.slice(), l: r.l.slice(), c: r.c.slice(), v: r.v.slice()}; }
+  function view4(raw4, nowMs, v, cfg) {
+    if (!raw4 || !raw4.c || raw4.c.length < 40) return {ok: false, why: 'Data 4 jam belum cukup.'};
+    const f = expand4(raw4), n0 = f.t.length;
+    // candle terakhir dianggap belum tutup bila waktunya belum lewat 4 jam
+    const live = f.t[n0 - 1] + H4 > nowMs;
+    const d = live ? slice(f, 0, n0 - 1) : f, n = d.c.length - 1;
+    if (n < 35) return {ok: false, why: 'Data 4 jam belum cukup.'};
+    const price = live ? f.c[n0 - 1] : d.c[n];
+    const e20 = ema(d.c, 20), e50 = ema(d.c, 50), R = rsi(d.c), A = atr(d);
+    const e12 = ema(d.c, 12), e26 = ema(d.c, 26), mc = d.c.map((_, i) => e12[i] != null && e26[i] != null ? e12[i] - e26[i] : null), sg = ema(mc, 9);
+    const hist = mc.map((m, i) => m != null && sg[i] != null ? m - sg[i] : null);
+    const c = d.c[n], r4 = R[n], a4 = A[n], h = hist[n], hp = hist[n - 1];
+    if (r4 == null || a4 == null || e20[n] == null || h == null || hp == null) return {ok: false, why: 'Data 4 jam belum cukup.'};
+    const parts = [];
+    const trend = (c > e20[n] ? 0.5 : -0.5) + (e50[n] != null ? (e20[n] > e50[n] ? 0.5 : -0.5) : 0);
+    parts.push({n: 'Tren 4 jam', v: trend, why: 'Harga ' + (c > e20[n] ? 'di atas' : 'di bawah') + ' EMA20 4 jam' + (e50[n] != null ? '; EMA20 ' + (e20[n] > e50[n] ? 'di atas' : 'di bawah') + ' EMA50.' : '.')});
+    parts.push({n: 'Momentum 4 jam (RSI)', v: rsiVal(r4), why: 'RSI 4 jam ' + r4.toFixed(0) + (r4 >= 70 ? ': jenuh beli, rawan koreksi cepat.' : r4 >= 50 ? ': momentum naik sehat.' : r4 >= 30 ? ': momentum lemah.' : ': jenuh jual, belum terkonfirmasi.')});
+    const mv = h > 0 && h > hp ? 1 : h > 0 ? 0.3 : h > hp ? -0.3 : -1;
+    parts.push({n: 'MACD 4 jam', v: mv, why: 'Histogram ' + (h > 0 ? 'positif' : 'negatif') + (h > hp ? ' dan menguat.' : ' dan melemah.')});
+    let hh = -Infinity, ll = Infinity; for (let j = n - 20; j < n; j++) { hh = Math.max(hh, d.h[j]); ll = Math.min(ll, d.l[j]); }
+    const pos = (price - ll) / ((hh - ll) || 1);
+    parts.push({n: 'Posisi 20 candle (±3,3 hari)', v: price > hh ? 1 : price < ll ? -1 : (pos - 0.5) * 1.2, why: price > hh ? 'Menembus high 3 hari terakhir.' : price < ll ? 'Menembus low 3 hari terakhir.' : 'Harga di ' + (pos * 100).toFixed(0) + '% rentang 3 hari terakhir.'});
+    const skor = clamp(parts.reduce((a, b) => a + b.v, 0) / parts.length * 100, -100, 100);
+    const jarakEma = (price - e20[n]) / a4; // seberapa jauh dari EMA20, dalam satuan ATR
+    const arah = v && v.ok ? v.vd.k : 'tunggu';
+    let sinyal, cls, ket;
+    if (arah === 'hindari' || arah === 'jual') { sinyal = 'HINDARI'; cls = 'bad'; ket = 'Arah harian melemah (' + v.vd.t + '). Jangan membeli hanya karena grafik 4 jam memantul.'; }
+    else if (r4 >= 72 || jarakEma > 3) { sinyal = 'TUNGGU KOREKSI'; cls = 'warn'; ket = (r4 >= 72 ? 'RSI 4 jam ' + r4.toFixed(0) + ' terlalu panas. ' : '') + (jarakEma > 3 ? 'Harga ' + jarakEma.toFixed(1).replace('.', ',') + '× ATR di atas EMA20, terlalu jauh dari titik wajar. ' : '') + 'Menunggu harga turun mendekati EMA20 (' + fx(e20[n]) + ' USDT) biasanya memberi titik beli lebih baik dan stop lebih dekat.'; }
+    else if (arah === 'beli' && skor >= 25) { sinyal = 'WAKTU MASUK BAGUS'; cls = 'good'; ket = 'Arah harian searah (' + v.vd.t + ') dan grafik 4 jam mendukung.'; }
+    else if (arah === 'beli') { sinyal = 'TUNGGU KONFIRMASI'; cls = 'warn'; ket = 'Arah harian bagus, tetapi grafik 4 jam belum mendukung (skor ' + skor.toFixed(0) + '). Tunggu skor 4 jam naik di atas 25.'; }
+    else if (skor >= 50) { sinyal = 'PANTAU'; cls = 'warn'; ket = 'Grafik 4 jam kuat tetapi arah harian belum memberi izin. Cocok hanya untuk trading sangat singkat dengan ukuran kecil.'; }
+    else { sinyal = 'TUNGGU'; cls = 'warn'; ket = 'Belum ada keselarasan antara arah harian dan grafik 4 jam.'; }
+    // rencana singkat dari ATR 4 jam
+    const mult = cfg && cfg.atrMult ? cfg.atrMult : 2;
+    let stop = price - mult * a4; if (stop <= 0) stop = price * 0.5;
+    const risk = price - stop, t1 = price + 1.5 * risk, t2 = price + 2.5 * risk;
+    return {ok: true, skor, sinyal, cls, ket, parts, rsi: r4, price, ema20: e20[n], ema50: e50[n], atr: a4, atrPct: a4 / price, jarakEma, stop, t1, t2, risk,
+      stopPct: -risk / price, t1Pct: (t1 - price) / price, t2Pct: (t2 - price) / price, live};
+  }
+
+  /* ---------- peringatan khusus Ajaib ---------- */
+  // v = view harian, cfg = cfgMesin(), pl = plan() atau null, prem = {pct (pecahan), tgl:'YYYY-MM-DD'} atau null, hariIni = 'YYYY-MM-DD'
+  function ajaib(v, cfg, pl, prem, hariIni) {
+    const out = [];
+    if (!v || !v.ok) return out;
+    const add = (lvl, t) => out.push({lvl, t});
+    const bolakBalik = cfg.feeB + cfg.feeS + 2 * (cfg.slip || 0);
+    // 1) likuiditas global (rupiah di Ajaib biasanya lebih tipis dari bursa global)
+    if (v.liq < 1e6) add('bad', 'Likuiditas sangat tipis (nilai transaksi harian global ±$' + fi(v.liq) + '). Di Ajaib selisih harga beli-jual bisa lebar dan order sulit terisi. Hindari atau pakai ukuran sangat kecil.');
+    else if (v.liq < cfg.minLiq) add('warn', 'Likuiditas di bawah batas Anda (±$' + fi(v.liq) + '/hari). Pakai limit order, jangan market order.');
+    else if (v.liq < 5 * cfg.minLiq) add('ok', 'Likuiditas cukup (±$' + fi(v.liq) + '/hari).');
+    else add('ok', 'Likuiditas besar (±$' + fi(v.liq) + '/hari), selisih harga biasanya kecil.');
+    // 2) biaya vs volatilitas
+    const a = v.I.atr[v.n], atrPct = a != null ? a / v.price : null;
+    add(bolakBalik > 0.015 ? 'warn' : 'ok', 'Biaya bolak-balik (beli + jual + selisih) ±' + pct(bolakBalik, 2).replace('+', '') + '. Harga harus naik minimal segitu hanya untuk impas.');
+    if (atrPct != null && atrPct < bolakBalik * 4) add('warn', 'Gerak harian koin ini (ATR ±' + pct(atrPct, 1).replace('+', '') + ') kecil dibanding biaya. Sebagian besar untung akan termakan fee.');
+    // 3) target vs biaya
+    if (pl) {
+      const t1p = (pl.t1 - pl.e) / pl.e;
+      if (t1p < bolakBalik * 3) add('warn', 'Target 1 (' + pct(t1p) + ') kurang dari 3× biaya. Untung bersihnya tipis.');
+      if (pl.q > 0 && !pl.minOk) add('bad', 'Nilai beli Rp ' + fi(pl.costIdr) + ' di bawah order minimal Rp ' + fi(cfg.minOrder) + '. Order bisa ditolak.');
+      else if (pl.q > 0 && pl.costIdr < cfg.minOrder * 1.5) add('warn', 'Nilai beli hanya sedikit di atas order minimal. Jual sebagian nanti bisa terhalang minimal.');
+    }
+    // 4) selisih harga robot vs Ajaib (dicatat manual lewat "Samakan harga Ajaib")
+    if (prem && prem.pct != null) {
+      const umur = prem.tgl && hariIni ? Math.round((Date.parse(hariIni) - Date.parse(prem.tgl)) / 86400000) : null;
+      const tua = umur != null && umur > 3;
+      if (Math.abs(prem.pct) > 0.01) add('warn', 'Harga Ajaib ' + (prem.pct > 0 ? 'lebih mahal ' : 'lebih murah ') + pct(Math.abs(prem.pct)).replace('+', '') + ' dari harga global (kurs pasar)' + (umur != null ? (umur === 0 ? ' (dicatat hari ini)' : ' (dicatat ' + umur + ' hari lalu)') : '') + '. ' + (prem.pct > 0 ? 'Membeli di Ajaib lebih mahal dari harga global.' : 'Menjual di Ajaib lebih murah dari harga global.'));
+      else add('ok', 'Harga Ajaib dekat harga global (selisih ' + pct(prem.pct, 2) + (umur != null ? (umur === 0 ? ', dicatat hari ini' : ', dicatat ' + umur + ' hari lalu') : '') + ').');
+      if (tua) add('warn', 'Catatan selisih harga sudah ' + umur + ' hari. Samakan ulang dengan harga Ajaib sekarang.');
+    } else add('warn', 'Selisih harga Ajaib untuk koin ini belum dicatat. Isi harga di Ajaib pada kotak "Samakan dengan harga Ajaib" agar robot bisa menghitungnya.');
+    return out;
   }
 
   /* ---------- rapor jurnal ---------- */
@@ -540,7 +633,7 @@ const ENG = (function () {
     return {all: stat(t), sesuai: stat(sesuai), tidak: stat(tidak), disiplin: stat(disiplin), longgar: stat(longgar)};
   }
 
-  return {W, DAY, clamp, fx, fi, pct, qtyDec, expand, split, sma, ema, rsi, atr, analyze, scoreAt, verdict, view, pasar, potensi, kandidat, plan, backtest, rapor};
+  return {W, DAY, clamp, fx, fi, pct, qtyDec, expand, split, sma, ema, rsi, atr, analyze, scoreAt, verdict, view, pasar, potensi, kandidat, plan, backtest, rapor, view4, expand4, ajaib};
 })();
 
 
@@ -548,7 +641,7 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const {fx, fi, pct} = ENG;
-const S = {data: null, views: {}, ps: null, sel: null, range: 120, sma200: false, cfg: {}, jr: [], kurs: 0, scan: null, tok: '', user: null, mode: 'login', adm: null};
+const S = {data: null, views: {}, ps: null, sel: null, range: 120, sma200: false, cfg: {}, jr: [], kurs: 0, kursRef: 0, prem: {}, scan: null, tok: '', user: null, mode: 'login', adm: null};
 const IZIN_NAMA = {watchlist: 'Kelola watchlist', pindai: 'Pemindai', jurnal: 'Jurnal & posisi', pengaturan: 'Pengaturan', notif: 'Notifikasi Telegram', admin: 'Admin'};
 const rp = x => x == null || isNaN(x) ? '–' : (Math.abs(x) >= 1000 ? fi(x) : fx(x));
 const rpTanda = x => (x >= 0 ? '+' : '-') + 'Rp ' + rp(Math.abs(x));
@@ -556,7 +649,7 @@ const bisa = i => !!(S.user && S.user.izin.indexOf(i) >= 0);
 const CFG_FIELDS = [
   ['modal', 'Modal (Rp)', 100000], ['risiko', 'Risiko per transaksi (%)', 0.1], ['atr', 'Stop = ATR ×', 0.5], ['masuk', 'Skor beli ≥', 5], ['keluar', 'Skor keluar ≤', 5],
   ['feeBeli', 'Fee+pajak beli (%)', 0.01], ['feeJual', 'Fee+pajak jual (%)', 0.01], ['alokasi', 'Maks. alokasi/koin (%)', 5], ['minOrder', 'Order minimal (Rp)', 1000],
-  ['minLiqJuta', 'Transaksi harian min. (juta USD)', 1], ['kursManual', 'Kurs USDT/IDR manual (0=otomatis)', 100], ['batasUntung', 'Notif untung ≥ (%)', 1], ['batasRugi', 'Notif rugi ≥ (%)', 1]];
+  ['minLiqJuta', 'Transaksi harian min. (juta USD)', 1], ['kursManual', 'Kurs USDT/IDR manual (0=otomatis)', 100], ['batasUntung', 'Notif untung ≥ (%)', 1], ['batasRugi', 'Notif rugi ≥ (%)', 1], ['slip', 'Perkiraan selisih harga tiap sisi (%)', 0.05]];
 
 /* ---------- komunikasi dengan server ---------- */
 function apiSiap() { return API_URL && API_URL.indexOf('GANTI_DENGAN') !== 0; }
@@ -619,7 +712,7 @@ async function muat() {
   kunci(true); setMsg('Mengambil data...', false);
   try {
     const j = await api('data');
-    S.data = j; S.cfg = j.cfg; S.jr = j.jurnal || []; S.kurs = j.kurs || 0; S.user = j.user;
+    S.data = j; S.cfg = j.cfg; S.jr = j.jurnal || []; S.kurs = j.kurs || 0; S.kursRef = j.kursRef || 0; S.prem = j.prem || {}; S.user = j.user;
     $('#authCard').hidden = true; $('#appView').hidden = false;
     terapkanIzin();
     hitungSemua();
@@ -632,14 +725,16 @@ async function muat() {
 }
 function hitungSemua() {
   const now = Date.now(); S.views = {};
-  S.data.watch.forEach(it => { S.views[it.k] = Object.assign(ENG.view(it.d, now), {src: it.src, wl: it.wl}); });
+  S.data.watch.forEach(it => { S.views[it.k] = Object.assign(ENG.view(it.d, now), {src: it.src, wl: it.wl, d4: it.d4 || null}); });
   S.ps = ENG.pasar(S.views.BTC);
 }
 function cfgMesin() {
   const c = S.cfg;
   return {cap: c.modal, riskPct: c.risiko, atrMult: c.atr, entryTh: c.masuk, exitTh: c.keluar, feeB: c.feeBeli / 100, feeS: c.feeJual / 100,
-    alokasi: c.alokasi, minOrder: c.minOrder, minLiq: c.minLiqJuta * 1e6, ketatPasar: !!c.ketatPasar};
+    alokasi: c.alokasi, minOrder: c.minOrder, minLiq: c.minLiqJuta * 1e6, ketatPasar: !!c.ketatPasar, slip: (c.slip || 0) / 100};
 }
+function pendek(k) { const v = S.views[k]; return v && v.ok ? ENG.view4(v.d4, Date.now(), v, cfgMesin()) : null; }
+function hari() { const d = new Date(Date.now() + 7 * 3600000); return d.toISOString().slice(0, 10); }
 function dimiliki() { const o = {}; S.jr.filter(r => r.status === 'OPEN').forEach(r => { (o[r.kode] = o[r.kode] || []).push(r); }); return o; }
 function urutan() {
   const mil = dimiliki();
@@ -706,8 +801,8 @@ function meter(v) {
 }
 function renderWatch() {
   const ks = urutan(), tbl = $('#wl'); $('#wlCard').hidden = !ks.length && !S.data.gagal.length;
-  const cfg = cfgMesin(), mil = dimiliki(), jr = bisa('jurnal'), nCol = jr ? 11 : 9;
-  let h = '<tr><th>Koin</th><th class="num">Harga (Rp)</th><th class="num">24j</th><th class="num">7h</th><th>Skor</th><th>Sinyal</th>' +
+  const cfg = cfgMesin(), mil = dimiliki(), jr = bisa('jurnal'), nCol = jr ? 12 : 10;
+  let h = '<tr><th>Koin</th><th class="num">Harga (Rp)</th><th class="num">24j</th><th class="num">7h</th><th>Skor</th><th>Sinyal</th><th title="Waktu masuk menurut grafik 4 jam">Waktu masuk (4 jam)</th>' +
     (jr ? '<th class="num">Modal beli (Rp)</th><th class="num">Nilai sekarang (Rp)</th><th class="num">Untung/rugi</th>' : '') + '<th>Keputusan</th><th></th></tr>';
   let tM = 0, tN = 0;
   ks.forEach(k => {
@@ -716,11 +811,11 @@ function renderWatch() {
     const aksi = (jr ? `<button class="seg primary" data-beli="${k}" title="Catat pembelian ${k}">+ Beli</button> ` : '') + (!r.ada && bisa('watchlist') ? `<button class="seg danger" data-del="${k}" title="Hapus dari watchlist">Hapus</button>` : '');
     h += `<tr data-k="${k}" tabindex="0" class="${k === S.sel ? 'sel' : ''}"><td><b>${k}</b></td><td class="num"><b>${S.kurs ? rp(v.price * S.kurs) : '–'}</b></td>
       <td class="num ${v.chg24 >= 0 ? 'good' : 'bad'}">${pct(v.chg24)}</td><td class="num ${v.chg7 >= 0 ? 'good' : 'bad'}">${pct(v.chg7)}</td>
-      <td>${meter(v.score)}${v.score.toFixed(0)}</td><td><span class="badge ${v.vd.cls}">${v.vd.ic} ${v.vd.t}</span></td>` +
+      <td>${meter(v.score)}${v.score.toFixed(0)}</td><td><span class="badge ${v.vd.cls}">${v.vd.ic} ${v.vd.t}</span></td><td>${(p4 => p4 && p4.ok ? `<span class="badge ${p4.cls}" title="${esc(p4.ket)}">${p4.sinyal}</span>` : '<span class="note">–</span>')(pendek(k))}</td>` +
       (jr ? (r.ada ? `<td class="num">${fi(r.modal)}</td><td class="num">${fi(r.nilai)}</td><td class="num ${r.laba >= 0 ? 'good' : 'bad'}"><b>${rpTanda(r.laba)}</b><div class="note ${r.laba >= 0 ? 'good' : 'bad'}">${pct(r.pc)}</div></td>` : '<td class="num note">–</td><td class="num note">–</td><td class="num note">–</td>') : '') +
       `<td title="${esc(r.alasan)}"><span class="badge ${r.cls}">${r.aksi}</span></td><td>${aksi}</td></tr>`;
   });
-  if (jr && tM > 0) h += `<tr><td colspan="6"><b>Total semua posisi</b></td><td class="num"><b>${fi(tM)}</b></td><td class="num"><b>${fi(tN)}</b></td><td class="num ${tN - tM >= 0 ? 'good' : 'bad'}"><b>${rpTanda(tN - tM)}</b><div class="note">${pct(tN / tM - 1)}</div></td><td colspan="2"></td></tr>`;
+  if (jr && tM > 0) h += `<tr><td colspan="7"><b>Total semua posisi</b></td><td class="num"><b>${fi(tM)}</b></td><td class="num"><b>${fi(tN)}</b></td><td class="num ${tN - tM >= 0 ? 'good' : 'bad'}"><b>${rpTanda(tN - tM)}</b><div class="note">${pct(tN / tM - 1)}</div></td><td colspan="2"></td></tr>`;
   S.data.gagal.forEach(k => { h += `<tr><td><b>${esc(k)}</b></td><td colspan="${nCol - 1}" class="bad">Data gagal diambil atau kurang dari 40 hari.</td></tr>`; });
   tbl.innerHTML = h;
 }
@@ -744,6 +839,20 @@ function renderDetail() {
     </table>
     ${pl.q <= 0 ? '<p class="warn note">Jumlah 0: modal atau batas risiko terlalu kecil untuk koin ini. Naikkan risiko/alokasi atau pilih koin lain.</p>' : ''}
     ${pl.q > 0 && !pl.minOk ? `<p class="warn note">Nilai beli di bawah order minimal (Rp ${fi(S.cfg.minOrder)}). Cek batas minimal di aplikasi Ajaib.</p>` : ''}`;
+  const p4 = pendek(k), aj = ENG.ajaib(v, cfg, pl, S.prem[k], hari());
+  const p4Html = !p4 || !p4.ok ? `<div class="card"><h3>Waktu masuk (grafik 4 jam)</h3><p class="note">${esc(p4 ? p4.why : 'Data 4 jam belum tersedia.')}</p></div>` : `<div class="card">
+    <div class="row" style="justify-content:space-between;align-items:center"><h3 style="margin:0">Waktu masuk (grafik 4 jam)</h3><span class="badge ${p4.cls}" style="font-size:14px">${p4.sinyal} · skor 4 jam ${p4.skor.toFixed(0)}</span></div>
+    <p class="note">${esc(p4.ket)}</p>
+    <table class="kv">
+      <tr><td>Harga sekarang</td><td class="num">${S.kurs ? 'Rp ' + rp(p4.price * S.kurs) + ' ' : ''}<span class="note">(${fx(p4.price)} USDT)</span></td></tr>
+      <tr><td>EMA20 4 jam (titik wajar)</td><td class="num">${S.kurs ? 'Rp ' + rp(p4.ema20 * S.kurs) + ' ' : ''}<span class="note">(${fx(p4.ema20)} USDT; harga ${p4.jarakEma >= 0 ? '+' : ''}${p4.jarakEma.toFixed(1).replace('.', ',')}× ATR dari sini)</span></td></tr>
+      <tr><td>Stop singkat (${S.cfg.atr}× ATR 4 jam)</td><td class="num bad">${S.kurs ? 'Rp ' + rp(p4.stop * S.kurs) + ' · ' : ''}${pct(p4.stopPct)}</td></tr>
+      <tr><td>Target 1 / 2 (1,5R / 2,5R)</td><td class="num good">${S.kurs ? 'Rp ' + rp(p4.t1 * S.kurs) + ' / Rp ' + rp(p4.t2 * S.kurs) + ' · ' : ''}${pct(p4.t1Pct)} / ${pct(p4.t2Pct)}</td></tr>
+    </table>
+    ${p4.parts.map(c => `<div class="comp"><b>${esc(c.n)}</b><span class="${c.v >= 0 ? 'good' : 'bad'}">${c.v >= 0 ? '+' : ''}${(c.v * 100).toFixed(0)}%</span><span class="note">${esc(c.why)}</span></div>`).join('')}
+    <p class="note">Aturan: arah besar ditentukan skor harian; grafik 4 jam hanya menentukan <i>kapan</i> masuk. Bila arah harian melemah, sinyal 4 jam diabaikan.</p></div>`;
+  const ajHtml = `<div class="card"><h3>Cek khusus Ajaib</h3>${aj.map(a => `<div class="comp" style="grid-template-columns:96px 1fr"><span class="badge ${a.lvl === 'ok' ? 'good' : a.lvl === 'bad' ? 'bad' : 'warn'}">${a.lvl === 'ok' ? 'AMAN' : a.lvl === 'bad' ? 'BAHAYA' : 'HATI-HATI'}</span><span class="note">${esc(a.t)}</span></div>`).join('')}
+    <p class="note">Likuiditas dibaca dari volume bursa global, bukan dari Ajaib. Selisih harga Ajaib hanya akurat bila Anda mencatatnya lewat kotak "Samakan dengan harga Ajaib".</p></div>`;
   const pos = posisiKoin(k, v);
   const posHtml = pos ? `<div class="kpis" style="margin:8px 0">
     <div class="kpi"><b>Untung/rugi posisi ${esc(k)}</b><span class="${pos.laba >= 0 ? 'good' : 'bad'}">${pos.txt}</span></div>
@@ -765,15 +874,21 @@ function renderDetail() {
     ${posHtml}
     <canvas id="cv"></canvas>
   </div>
+  ${p4Html}
+  ${ajHtml}
   <div class="grid2">
     <div class="card"><h3>Rencana trade (modal Rp ${fi(S.cfg.modal)}, risiko ${S.cfg.risiko}%)</h3>${bad}</div>
-    <div class="card"><h3>Backtest (data harian, dengan stop &amp; fee)</h3>
+    <div class="card"><h3>Backtest (harian, setelah fee &amp; selisih harga)</h3>
+      <p style="margin:0 0 6px"><span class="badge ${bt.layak === 'LAYAK' ? 'good' : bt.layak === 'DATA KURANG' ? 'warn' : bt.layak === 'TIPIS' || bt.layak === 'LEMAH' ? 'warn' : 'bad'}">${bt.layak}</span> <span class="note">${esc(bt.layakWhy)}</span></p>
       ${bt.n === 0 ? '<p class="note">Belum ada transaksi pada periode data ini.</p>' : `<table class="kv">
       <tr><td>Jumlah transaksi</td><td class="num">${bt.n}</td></tr>
       <tr><td>Menang</td><td class="num">${bt.win == null ? '–' : pct(bt.win, 0).replace('+', '')}</td></tr>
+      <tr><td>Biaya bolak-balik per transaksi</td><td class="num">${pct(bt.biaya, 2).replace('+', '')}</td></tr>
       <tr><td>Rata-rata untung / rugi</td><td class="num">${bt.avgW == null ? '–' : pct(bt.avgW)} / ${bt.avgL == null ? '–' : pct(-bt.avgL)}</td></tr>
       <tr><td>Profit factor</td><td class="num">${bt.pf == null ? '–' : bt.pf === Infinity ? '∞' : bt.pf.toFixed(2).replace('.', ',')}</td></tr>
-      <tr><td>Hasil robot</td><td class="num ${bt.total >= 0 ? 'good' : 'bad'}">${pct(bt.total)}</td></tr>
+      <tr><td>Hasil kotor (tanpa biaya)</td><td class="num ${bt.kotor >= 0 ? 'good' : 'bad'}">${pct(bt.kotor)}</td></tr>
+      <tr><td>Biaya tergerus (fee + selisih harga)</td><td class="num bad">${pct(-bt.seret)}</td></tr>
+      <tr><td><b>Hasil bersih robot</b></td><td class="num ${bt.total >= 0 ? 'good' : 'bad'}"><b>${pct(bt.total)}</b></td></tr>
       <tr><td>Beli &amp; tahan</td><td class="num ${bt.bh >= 0 ? 'good' : 'bad'}">${pct(bt.bh)}</td></tr>
       <tr><td>Penurunan terdalam</td><td class="num bad">${pct(bt.mdd)}</td></tr>
       <tr><td>Waktu di pasar</td><td class="num">${pct(bt.expo, 0).replace('+', '')}</td></tr></table>`}
@@ -1024,7 +1139,21 @@ async function kalibrasi(auto) {
     if (!v || !v.ok || !(harga > 0)) { m.textContent = 'Pilih koin dan isi harga Rp dari aplikasi Ajaib.'; return; }
     const kurs = Math.round(harga / v.price * 100) / 100;
     if (kurs < 1000 || kurs > 100000) { m.textContent = 'Hasil kurs tidak masuk akal (' + fi(kurs) + '). Periksa harga yang diisi.'; return; }
-    await api('cfg', {cfg: {kursManual: kurs}}); m.textContent = 'Kurs disamakan: Rp ' + fi(kurs) + ' per USDT.'; $('#kalRp').value = ''; await muat();
+    await api('cfg', {cfg: {kursManual: kurs}});
+    if (S.kursRef > 0) { try { await api('prem', {k, pct: harga / (v.price * S.kursRef) - 1}); } catch (e) {} }
+    m.textContent = 'Kurs disamakan: Rp ' + fi(kurs) + ' per USDT.'; $('#kalRp').value = ''; await muat();
+  } catch (e) { m.textContent = e.message; }
+}
+
+async function catatPrem() {
+  const m = $('#kalMsg');
+  try {
+    const k = $('#kalKode').value, v = S.views[k], harga = Number($('#kalRp').value);
+    if (!v || !v.ok || !(harga > 0)) { m.textContent = 'Pilih koin dan isi harga Rp dari aplikasi Ajaib.'; return; }
+    if (!(S.kursRef > 0)) { m.textContent = 'Kurs acuan belum tersedia dari server. Perbarui Code.gs ke versi terbaru.'; return; }
+    const j = await api('prem', {k, pct: harga / (v.price * S.kursRef) - 1});
+    S.prem = j.prem || S.prem; const e = S.prem[k];
+    m.textContent = 'Selisih ' + k + ' dicatat: ' + (e ? pct(e.pct, 2) : '–') + ' dibanding harga global.'; $('#kalRp').value = ''; renderDetail(); renderWatch();
   } catch (e) { m.textContent = e.message; }
 }
 
@@ -1095,7 +1224,7 @@ document.addEventListener('input', ev => {
   if (['jrNom', 'jrIdr', 'jrQ', 'jrStopIdr', 'jrTpIdr', 'jrKode', 'jrM1', 'jrM2', 'jrM3'].indexOf(id) >= 0) jrRender();
 });
 $('#kode').addEventListener('keydown', e => { if (e.key === 'Enter') tambah(); });
-$('#btnTambah').onclick = tambah; $('#btnMuat').onclick = muat; $('#btnCfg').onclick = simpanCfg; $('#kalOk').onclick = () => kalibrasi(false); $('#kalAuto').onclick = () => kalibrasi(true); $('#jrSimpan').onclick = catatBeli; $('#jrIsi').onclick = isiDariRencana;
+$('#btnTambah').onclick = tambah; $('#btnMuat').onclick = muat; $('#btnCfg').onclick = simpanCfg; $('#kalOk').onclick = () => kalibrasi(false); $('#kalAuto').onclick = () => kalibrasi(true); $('#kalPrem').onclick = catatPrem; $('#jrSimpan').onclick = catatBeli; $('#jrIsi').onclick = isiDariRencana;
 $('#btnScan').onclick = () => pindai(false); $('#btnScanBaru').onclick = () => pindai(true);
 $('#btnTgSimpan').onclick = async () => { try { const j = await api('tg_set', {chatId: $('#tgChat').value}); S.data.tg.chatId = j.chatId; $('#tgMsg').textContent = 'Tersimpan.'; } catch (e) { $('#tgMsg').textContent = e.message; } };
 $('#btnTg').onclick = async () => { try { await api('tg_tes'); $('#tgMsg').textContent = 'Pesan percobaan terkirim. Cek Telegram Anda.'; } catch (e) { $('#tgMsg').textContent = e.message; } };

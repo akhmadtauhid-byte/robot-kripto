@@ -113,6 +113,7 @@ tr.nonaktif td{opacity:.55}
     <h3>Kondisi pasar</h3>
     <div id="pasarOut"></div>
     <div class="note" id="updOut" style="margin-top:6px"></div>
+    <label class="chk" style="margin-top:4px"><input type="checkbox" id="autoRef"> Segarkan data otomatis tiap 5 menit selama halaman terbuka</label>
     <div class="row" data-izin="pengaturan" style="margin-top:10px;align-items:flex-end">
       <label>Samakan dengan harga Ajaib: koin <select id="kalKode"></select></label>
       <label>Harga di Ajaib (Rp) <input type="number" id="kalRp" min="0" step="any" inputmode="decimal" placeholder="lihat di aplikasi Ajaib"></label>
@@ -616,6 +617,40 @@ const ENG = (function () {
     return out;
   }
 
+  /* ---------- gerak harga cepat (candle 15 menit) & ulasan alert ---------- */
+  // d = {t,o,h,l,c,v} candle 15 menit urut lama->baru; candle terakhir boleh masih berjalan.
+  function gerak15(d) {
+    if (!d || !d.c || d.c.length < 18) return {ok: false};
+    const n = d.c.length - 1, c = d.c, v = d.v;
+    if (!(c[n] > 0) || !(c[n - 1] > 0) || !(c[n - 4] > 0) || !(c[n - 16] > 0)) return {ok: false};
+    let v1 = 0; for (let i = n - 3; i <= n; i++) v1 += v[i];
+    let vb = 0; for (let i = 0; i <= n - 4; i++) vb += v[i];
+    const jam = (n - 3) / 4, base = jam > 0 ? vb / jam : 0;
+    return {ok: true, price: c[n], chg15: c[n] / c[n - 1] - 1, chg1h: c[n] / c[n - 4] - 1, chg4h: c[n] / c[n - 16] - 1, volX: base > 0 ? v1 / base : null, n};
+  }
+  // Menilai apakah kenaikan cepat layak dikejar. Mengembalikan {jenis, teks}.
+  // jenis: PELUANG (searah semua), PANAS (sudah terlalu tinggi), LEMAH (melawan arah harian), PANTAU (belum ada konfirmasi)
+  function ulasNaik(o) {
+    const g = o.g, v = o.v, p4 = o.p4, kurs = o.kurs, hrg = x => kurs ? 'Rp ' + fi(x * kurs) : fx(x) + ' USDT';
+    const L = [];
+    L.push('NAIK CEPAT: ' + o.k + ' ' + pct(g.chg1h) + ' dalam 1 jam (' + pct(g.chg4h) + ' dalam 4 jam)');
+    L.push('Harga sekarang ' + hrg(g.price) + (kurs ? ' (' + fx(g.price) + ' USDT)' : '') + '.');
+    L.push(g.volX == null ? '' : g.volX >= 1.5 ? 'Volume 1 jam ±' + g.volX.toFixed(1).replace('.', ',') + '× rata-rata: ada dorongan pembeli.' : 'Volume 1 jam hanya ±' + g.volX.toFixed(1).replace('.', ',') + '× rata-rata: kenaikan kurang meyakinkan.');
+    const harian = v && v.ok ? 'Skor harian ' + v.score.toFixed(0) + ' (' + v.vd.t + ')' : 'Data harian belum tersedia';
+    L.push(harian + (p4 && p4.ok ? '; grafik 4 jam: ' + p4.sinyal + '.' : '.'));
+    let jenis, saran;
+    const lemah = v && v.ok && (v.vd.k === 'hindari' || v.vd.k === 'jual');
+    if (lemah) { jenis = 'LEMAH'; saran = 'HATI-HATI: arah harian lemah, kenaikan ini rawan berbalik. Jangan mengejar.'; }
+    else if (p4 && p4.ok && p4.sinyal === 'TUNGGU KOREKSI') { jenis = 'PANAS'; saran = 'Sudah terlalu panas (RSI 4 jam ' + p4.rsi.toFixed(0) + '). Jangan mengejar; tunggu harga turun mendekati EMA20 4 jam (' + hrg(p4.ema20) + ').'; }
+    else if (p4 && p4.ok && p4.sinyal === 'WAKTU MASUK BAGUS' && !o.dimiliki) { jenis = 'PELUANG'; saran = 'Arah harian dan grafik 4 jam searah. Bisa dipertimbangkan: stop ±' + hrg(p4.stop) + ' (' + pct(p4.stopPct) + '), target 1 ±' + hrg(p4.t1) + ' (' + pct(p4.t1Pct) + ').'; }
+    else if (o.dimiliki) { jenis = 'PANTAU'; saran = 'Anda memegang koin ini. Pertimbangkan menaikkan stop agar sebagian untung terkunci.'; }
+    else { jenis = 'PANTAU'; saran = 'Belum ada konfirmasi searah dari harian dan 4 jam. Pantau dulu, jangan buru-buru.'; }
+    L.push(saran);
+    (o.aj || []).filter(a => a.lvl === 'bad').slice(0, 1).forEach(a => L.push('Ajaib: ' + a.t));
+    L.push('Cek dulu harga di Ajaib sebelum order; selisihnya bisa memakan untung.');
+    return {jenis, teks: L.filter(Boolean).join('\n')};
+  }
+
   /* ---------- rapor jurnal ---------- */
   // baris: {status, hasilPct, hasilIdr, skor, cekLulus, cekTotal}
   function rapor(rows, entryTh) {
@@ -633,7 +668,7 @@ const ENG = (function () {
     return {all: stat(t), sesuai: stat(sesuai), tidak: stat(tidak), disiplin: stat(disiplin), longgar: stat(longgar)};
   }
 
-  return {W, DAY, clamp, fx, fi, pct, qtyDec, expand, split, sma, ema, rsi, atr, analyze, scoreAt, verdict, view, pasar, potensi, kandidat, plan, backtest, rapor, view4, expand4, ajaib};
+  return {W, DAY, clamp, fx, fi, pct, qtyDec, expand, split, sma, ema, rsi, atr, analyze, scoreAt, verdict, view, pasar, potensi, kandidat, plan, backtest, rapor, view4, expand4, ajaib, gerak15, ulasNaik};
 })();
 
 
@@ -649,7 +684,8 @@ const bisa = i => !!(S.user && S.user.izin.indexOf(i) >= 0);
 const CFG_FIELDS = [
   ['modal', 'Modal (Rp)', 100000], ['risiko', 'Risiko per transaksi (%)', 0.1], ['atr', 'Stop = ATR ×', 0.5], ['masuk', 'Skor beli ≥', 5], ['keluar', 'Skor keluar ≤', 5],
   ['feeBeli', 'Fee+pajak beli (%)', 0.01], ['feeJual', 'Fee+pajak jual (%)', 0.01], ['alokasi', 'Maks. alokasi/koin (%)', 5], ['minOrder', 'Order minimal (Rp)', 1000],
-  ['minLiqJuta', 'Transaksi harian min. (juta USD)', 1], ['kursManual', 'Kurs USDT/IDR manual (0=otomatis)', 100], ['batasUntung', 'Notif untung ≥ (%)', 1], ['batasRugi', 'Notif rugi ≥ (%)', 1], ['slip', 'Perkiraan selisih harga tiap sisi (%)', 0.05]];
+  ['minLiqJuta', 'Transaksi harian min. (juta USD)', 1], ['kursManual', 'Kurs USDT/IDR manual (0=otomatis)', 100], ['batasUntung', 'Notif untung ≥ (%)', 1], ['batasRugi', 'Notif rugi ≥ (%)', 1], ['slip', 'Perkiraan selisih harga tiap sisi (%)', 0.05],
+  ['naik1j', 'Alert naik cepat 1 jam ≥ (%), 0=mati', 0.5], ['naik4j', 'Alert naik 4 jam ≥ (%), 0=mati', 0.5], ['turun1j', 'Alert turun cepat 1 jam ≥ (%) untuk posisi Anda, 0=mati', 0.5], ['cooldown', 'Jeda alert per koin (jam)', 1]];
 
 /* ---------- komunikasi dengan server ---------- */
 function apiSiap() { return API_URL && API_URL.indexOf('GANTI_DENGAN') !== 0; }
@@ -708,20 +744,20 @@ function terapkanIzin() {
   $('#ubIzin').textContent = 'Akses: ' + u.izin.map(i => IZIN_NAMA[i] || i).join(', ');
 }
 
-async function muat() {
-  kunci(true); setMsg('Mengambil data...', false);
+async function muat(diam) {
+  if (!diam) { kunci(true); setMsg('Mengambil data...', false); }
   try {
     const j = await api('data');
     S.data = j; S.cfg = j.cfg; S.jr = j.jurnal || []; S.kurs = j.kurs || 0; S.kursRef = j.kursRef || 0; S.prem = j.prem || {}; S.user = j.user;
     $('#authCard').hidden = true; $('#appView').hidden = false;
     terapkanIzin();
     hitungSemua();
-    setMsg(j.gagal.length ? 'Data gagal diambil untuk: ' + j.gagal.join(', ') + '.' : '', true);
+    if (!diam) setMsg(j.gagal.length ? 'Data gagal diambil untuk: ' + j.gagal.join(', ') + '.' : '', true);
     if (!S.sel || !S.views[S.sel]) S.sel = urutan()[0] || null;
     renderAll();
     if (bisa('admin')) muatAdmin();
-  } catch (e) { setMsg(e.message, true); }
-  kunci(false);
+  } catch (e) { if (!diam) setMsg(e.message, true); }
+  if (!diam) kunci(false);
 }
 function hitungSemua() {
   const now = Date.now(); S.views = {};
@@ -732,6 +768,25 @@ function cfgMesin() {
   const c = S.cfg;
   return {cap: c.modal, riskPct: c.risiko, atrMult: c.atr, entryTh: c.masuk, exitTh: c.keluar, feeB: c.feeBeli / 100, feeS: c.feeJual / 100,
     alokasi: c.alokasi, minOrder: c.minOrder, minLiq: c.minLiqJuta * 1e6, ketatPasar: !!c.ketatPasar, slip: (c.slip || 0) / 100};
+}
+function statusOto() {
+  const o = S.data.oto || {};
+  if (!o.menit) return 'pemindaian otomatis belum aktif' + (bisa('admin') ? ' (jalankan menuPindaiOtomatis di Apps Script)' : '');
+  const m = o.terakhir ? Math.round((Date.now() - o.terakhir) / 60000) : null;
+  return 'pemindaian otomatis tiap ' + o.menit + ' menit' + (m == null ? ', belum pernah berjalan' : ', terakhir ' + (m < 1 ? 'baru saja' : m + ' menit lalu') + (m > o.menit * 3 + 5 ? ' (mungkin terhenti, periksa jadwal)' : ''));
+}
+let autoTimer = null;
+function aturAuto() {
+  clearInterval(autoTimer); autoTimer = null;
+  let on = true; try { on = localStorage.getItem('autoRef') !== '0'; } catch (e) {}
+  const cb = $('#autoRef'); if (cb) cb.checked = on;
+  if (!on) return;
+  autoTimer = setInterval(() => {
+    if (document.hidden || !S.user || $('#appView').hidden) return;
+    const a = document.activeElement; if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return; // jangan ganggu saat mengetik
+    if (document.querySelector('dialog[open]')) return;
+    muat(true);
+  }, 300000);
 }
 function pendek(k) { const v = S.views[k]; return v && v.ok ? ENG.view4(v.d4, Date.now(), v, cfgMesin()) : null; }
 function hari() { const d = new Date(Date.now() + 7 * 3600000); return d.toISOString().slice(0, 10); }
@@ -780,13 +835,15 @@ function renderPasar() {
     <div class="kpi"><b>Kurs USDT/IDR</b><span>${S.kurs ? 'Rp ' + fi(S.kurs) : 'tidak tersedia'}</span></div></div>
     <div class="note" style="margin-top:6px">${esc(p.why)}${p.ketat && S.cfg.ketatPasar ? ' Syarat kandidat beli diperketat (+15 poin).' : ''} Altcoin biasanya mengikuti arah BTC.</div>`;
   const t = new Date(S.data.upd);
-  $('#updOut').textContent = 'Diperbarui ' + t.toLocaleString('id-ID') + ' · sumber kurs: ' + S.data.kursSrc + (S.data.tg.bot && S.data.tg.chatId ? ' · Telegram aktif' : ' · Telegram belum diatur') + ' · versi server ' + S.data.v;
+  $('#updOut').textContent = 'Diperbarui ' + t.toLocaleString('id-ID') + ' · sumber kurs: ' + S.data.kursSrc + (S.data.tg.bot && S.data.tg.chatId ? ' · Telegram aktif' : ' · Telegram belum diatur') + ' · ' + statusOto() + ' · versi server ' + S.data.v;
 }
 function renderCfg() {
   const row = $('#cfgRow');
   if (!row.dataset.ok) {
     row.innerHTML = CFG_FIELDS.map(f => `<label>${esc(f[1])}<input type="number" data-c="${f[0]}" step="${f[2] < 1 ? 'any' : f[2]}"></label>`).join('') +
-      `<label class="chk" style="padding-bottom:8px"><input type="checkbox" data-c="ketatPasar"> Perketat saat BTC lemah</label>`;
+      `<label class="chk" style="padding-bottom:8px"><input type="checkbox" data-c="ketatPasar"> Perketat saat BTC lemah</label>` +
+      `<label class="chk" style="padding-bottom:8px"><input type="checkbox" data-c="scanTop"> Kabari kandidat beli dari pemindai top-28 (maks. sekali per jam)</label>` +
+      `<label class="chk" style="padding-bottom:8px"><input type="checkbox" data-c="senyap"> Alert tanpa bunyi pukul 22.00-05.00 (stop/target tetap berbunyi)</label>`;
     row.dataset.ok = 1;
   }
   row.querySelectorAll('[data-c]').forEach(i => { const v = S.cfg[i.dataset.c]; if (i.type === 'checkbox') i.checked = !!v; else i.value = v; });
@@ -1224,7 +1281,8 @@ document.addEventListener('input', ev => {
   if (['jrNom', 'jrIdr', 'jrQ', 'jrStopIdr', 'jrTpIdr', 'jrKode', 'jrM1', 'jrM2', 'jrM3'].indexOf(id) >= 0) jrRender();
 });
 $('#kode').addEventListener('keydown', e => { if (e.key === 'Enter') tambah(); });
-$('#btnTambah').onclick = tambah; $('#btnMuat').onclick = muat; $('#btnCfg').onclick = simpanCfg; $('#kalOk').onclick = () => kalibrasi(false); $('#kalAuto').onclick = () => kalibrasi(true); $('#kalPrem').onclick = catatPrem; $('#jrSimpan').onclick = catatBeli; $('#jrIsi').onclick = isiDariRencana;
+$('#btnTambah').onclick = tambah; $('#btnMuat').onclick = () => muat(); $('#btnCfg').onclick = simpanCfg; $('#kalOk').onclick = () => kalibrasi(false); $('#autoRef').onchange = () => { try { localStorage.setItem('autoRef', $('#autoRef').checked ? '1' : '0'); } catch (e) {} aturAuto(); };
+$('#kalAuto').onclick = () => kalibrasi(true); $('#kalPrem').onclick = catatPrem; $('#jrSimpan').onclick = catatBeli; $('#jrIsi').onclick = isiDariRencana;
 $('#btnScan').onclick = () => pindai(false); $('#btnScanBaru').onclick = () => pindai(true);
 $('#btnTgSimpan').onclick = async () => { try { const j = await api('tg_set', {chatId: $('#tgChat').value}); S.data.tg.chatId = j.chatId; $('#tgMsg').textContent = 'Tersimpan.'; } catch (e) { $('#tgMsg').textContent = e.message; } };
 $('#btnTg').onclick = async () => { try { await api('tg_tes'); $('#tgMsg').textContent = 'Pesan percobaan terkirim. Cek Telegram Anda.'; } catch (e) { $('#tgMsg').textContent = e.message; } };
@@ -1252,6 +1310,7 @@ window.addEventListener('resize', () => { const v = S.views[S.sel]; if (v && v.o
       tampilAuth(st.perluSetup ? 'setup' : 'login', '');
     } catch (e) { if ($('#authCard').hidden) { tampilAuth('login', e.message); } else if (!$('#authErr').textContent) $('#authErr').textContent = e.message; }
   })();
+  aturAuto();
 })();
 </script>
 </body>

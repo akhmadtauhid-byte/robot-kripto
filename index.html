@@ -69,6 +69,11 @@ canvas{width:100%;height:340px;display:block;background:var(--bg);border:1px sol
 .comp{display:grid;grid-template-columns:170px 70px 1fr;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid var(--line);font-size:13px}
 @media(max-width:620px){.comp{grid-template-columns:1fr}}
 .authbox{max-width:360px}
+.minigrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}
+.mini{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--bg);cursor:pointer}
+.mini.sel{border-color:var(--s1)}
+.mini canvas{height:96px;margin-top:6px;border:0;border-radius:4px}
+.mini .hd{display:flex;justify-content:space-between;align-items:baseline;gap:6px}
 .col{display:flex;flex-direction:column;gap:10px}
 .col input{width:100%}
 .userbar{display:flex;flex-wrap:wrap;gap:10px;justify-content:space-between;align-items:center}
@@ -121,6 +126,12 @@ tr.nonaktif td{opacity:.55}
     <h3>Portofolio &amp; rekomendasi (koin yang Anda miliki di atas)</h3>
     <p class="note" style="margin-top:0">Tiap koin menampilkan modal beli, nilai sekarang, untung/rugi bersih fee, dan <b>keputusan</b> robot: TAHAN, WASPADA, PERTIMBANGKAN JUAL, AMBIL UNTUNG, JUAL (STOP), atau BOLEH BELI. Arahkan kursor/tekan lama pada keputusan untuk melihat alasannya. Klik baris untuk grafik dan rencana.</p>
     <div class="tblwrap"><table id="wl"></table></div>
+  </div>
+
+  <div class="card" id="miniCard" hidden>
+    <h3>Grafik watchlist (60 hari terakhir)</h3>
+    <p class="note" style="margin-top:0">Satu grafik per koin di watchlist. Garis putus-putus biru = harga beli Anda; angka hijau/merah = untung/rugi posisi. Klik grafik untuk detail lengkap.</p>
+    <div class="minigrid" id="miniGrid"></div>
   </div>
 
   <section id="detail" hidden></section>
@@ -634,6 +645,14 @@ function urutan() {
   const mil = dimiliki();
   return Object.keys(S.views).filter(k => S.views[k].ok && (S.views[k].wl || mil[k])).sort((a, b) => (mil[b] ? 1 : 0) - (mil[a] ? 1 : 0) || S.views[b].score - S.views[a].score);
 }
+function posisiKoin(k, v) {
+  const rows = dimiliki()[k]; if (!rows || !v || !v.ok) return null;
+  let jml = 0, cost = 0, modal = 0, nilai = 0;
+  rows.forEach(r => { const h = hitungPos(r, v.price); jml += r.jumlah; cost += r.harga * r.jumlah; modal += h.modal; nilai += h.nilai; });
+  const last = rows[rows.length - 1], laba = nilai - modal;
+  return {entry: cost / jml, stop: last.stop || 0, target: last.target || 0, jml, modal, nilai, laba, pc: modal > 0 ? laba / modal : 0,
+    impas: modal / (jml * (1 - S.cfg.feeJual / 100)) / S.kurs, txt: rpTanda(laba) + ' (' + pct(modal > 0 ? laba / modal : 0) + ')'};
+}
 // ringkasan posisi per koin + keputusan jual/tahan/beli
 function ringkasKoin(k, rows, v, kd) {
   if (!rows) {
@@ -651,7 +670,7 @@ function ringkasKoin(k, rows, v, kd) {
 }
 
 /* ---------- render ---------- */
-function renderAll() { renderPasar(); renderCfg(); renderWatch(); renderDetail(); renderScan(); renderPos(); renderJurnal(); renderTg(); }
+function renderAll() { renderPasar(); renderCfg(); renderWatch(); renderDetail(); renderScan(); renderPos(); renderJurnal(); renderTg(); renderMini(); }
 function renderTg() {
   const t = S.data.tg; $('#tgChat').value = t.chatId || '';
   $('#tgInfo').textContent = t.bot ? 'Bot sudah dipasang admin' + (t.botNama ? ' (@' + t.botNama + ')' : '') + '. Buka bot itu di Telegram, tekan Start, lalu cari Chat ID Anda (misalnya lewat bot @userinfobot) dan isi di bawah. Alert posisi dan kandidat beli akan dikirim ke Chat ID ini.' : 'Admin belum memasang bot Telegram. Minta admin mengisi token bot terlebih dahulu.';
@@ -725,6 +744,13 @@ function renderDetail() {
     </table>
     ${pl.q <= 0 ? '<p class="warn note">Jumlah 0: modal atau batas risiko terlalu kecil untuk koin ini. Naikkan risiko/alokasi atau pilih koin lain.</p>' : ''}
     ${pl.q > 0 && !pl.minOk ? `<p class="warn note">Nilai beli di bawah order minimal (Rp ${fi(S.cfg.minOrder)}). Cek batas minimal di aplikasi Ajaib.</p>` : ''}`;
+  const pos = posisiKoin(k, v);
+  const posHtml = pos ? `<div class="kpis" style="margin:8px 0">
+    <div class="kpi"><b>Untung/rugi posisi ${esc(k)}</b><span class="${pos.laba >= 0 ? 'good' : 'bad'}">${pos.txt}</span></div>
+    <div class="kpi"><b>Modal beli</b><span>Rp ${fi(pos.modal)}</span></div>
+    <div class="kpi"><b>Nilai sekarang</b><span>Rp ${fi(pos.nilai)}</span></div>
+    <div class="kpi"><b>Harga beli rata-rata</b><span>Rp ${rp(pos.entry * S.kurs)}</span></div>
+    <div class="kpi"><b>Harga impas</b><span>Rp ${rp(pos.impas * S.kurs)}</span></div></div>` : '';
   el.innerHTML = `<div class="card">
     <div class="row" style="justify-content:space-between;align-items:center">
       <h3 style="margin:0">${esc(k)} · ${S.kurs ? 'Rp ' + rp(v.price * S.kurs) + ' · ' : ''}${fx(v.price)} USDT <span class="note">(sumber ${esc(v.src)})</span></h3>
@@ -734,8 +760,9 @@ function renderDetail() {
     <div class="row" style="margin-bottom:8px">
       ${[60, 120, 250].map(r => `<button class="seg" data-range="${r}" aria-pressed="${S.range === r}">${r} hari</button>`).join('')}
       <label class="chk"><input type="checkbox" id="chk200" ${S.sma200 ? 'checked' : ''}> SMA200</label>
-      <span class="note">Garis: <span style="color:var(--s1)">SMA20</span> · <span style="color:var(--s2)">SMA50</span> · <span style="color:var(--s3)">SMA200</span></span>
+      <span class="note">Sumbu harga dalam Rp. Garis: <span style="color:var(--s1)">SMA20</span> · <span style="color:var(--s2)">SMA50</span> · <span style="color:var(--s3)">SMA200</span></span>
     </div>
+    ${posHtml}
     <canvas id="cv"></canvas>
   </div>
   <div class="grid2">
@@ -754,25 +781,26 @@ function renderDetail() {
     </div>
   </div>
   <div class="card"><h3>Mengapa skornya ${v.score.toFixed(0)}?</h3>${comps}</div>`;
-  requestAnimationFrame(() => gambar(v, lv));
+  requestAnimationFrame(() => gambar(v, pos ? null : lv, pos));
 }
-function gambar(v, lv) {
+function gambar(v, lv, pos) {
   const cv = $('#cv'); if (!cv) return;
   const dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight; if (!W) return;
   cv.width = W * dpr; cv.height = H * dpr;
   const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
   const d = v.full, n = d.c.length, from = Math.max(0, n - S.range), cnt = n - from;
-  const L = 8, R = 62, T = 10, B = 20, ph = (H - T - B) * 0.78, vh = (H - T - B) * 0.2, vy0 = T + (H - T - B) - vh;
+  const L = 8, R = 88, T = 10, B = 20, ph = (H - T - B) * 0.78, vh = (H - T - B) * 0.2, vy0 = T + (H - T - B) - vh;
   let lo = Infinity, hi = -Infinity, vmax = 0;
   for (let i = from; i < n; i++) { lo = Math.min(lo, d.l[i]); hi = Math.max(hi, d.h[i]); vmax = Math.max(vmax, d.v[i]); }
   if (lv) [lv.stop, lv.t1].forEach(p => { if (p) { lo = Math.min(lo, p); hi = Math.max(hi, p); } });
+  if (pos) [pos.entry, pos.stop, pos.target, v.price].forEach(p => { if (p) { lo = Math.min(lo, p); hi = Math.max(hi, p); } });
   const pad = (hi - lo) * 0.04 || hi * 0.01; lo -= pad; hi += pad;
   const cw = (W - L - R) / cnt, x = i => L + (i - from + 0.5) * cw, y = p => T + (hi - p) / (hi - lo) * ph;
   const gridC = css('--grid'), inkC = css('--muted'), goodC = css('--good'), badC = css('--bad');
   g.font = '11px system-ui'; g.textBaseline = 'middle'; g.lineWidth = 1;
   for (let t = 0; t <= 4; t++) {
     const p = lo + (hi - lo) * t / 4, yy = y(p); g.strokeStyle = gridC; g.beginPath(); g.moveTo(L, yy); g.lineTo(W - R, yy); g.stroke();
-    g.fillStyle = inkC; g.textAlign = 'left'; g.fillText(fx(p), W - R + 4, yy);
+    g.fillStyle = inkC; g.textAlign = 'left'; g.fillText(S.kurs ? rp(p * S.kurs) : fx(p), W - R + 4, yy);
   }
   for (let i = from; i < n; i++) {
     const up = d.c[i] >= d.o[i], col = up ? goodC : badC;
@@ -783,11 +811,53 @@ function gambar(v, lv) {
   const line = (arr, col) => { g.strokeStyle = col; g.lineWidth = 1.5; g.beginPath(); let st = false;
     for (let i = from; i < arr.length; i++) { if (arr[i] == null) continue; if (!st) { g.moveTo(x(i), y(arr[i])); st = true; } else g.lineTo(x(i), y(arr[i])); } g.stroke(); g.lineWidth = 1; };
   line(v.I.sma20, css('--s1')); line(v.I.sma50, css('--s2')); if (S.sma200) line(v.I.sma200, css('--s3'));
+  if (pos) {
+    const yE = y(pos.entry), yP = y(v.price), col = pos.laba >= 0 ? goodC : badC;
+    g.globalAlpha = 0.13; g.fillStyle = col; g.fillRect(L, Math.min(yE, yP), W - R - L, Math.max(Math.abs(yP - yE), 1)); g.globalAlpha = 1;
+    [['Beli', pos.entry, css('--s3')], ['Stop', pos.stop, badC], ['Target', pos.target, goodC]].forEach(a => {
+      if (!a[1] || a[1] < lo || a[1] > hi) return; g.strokeStyle = a[2]; g.setLineDash([5, 4]); g.beginPath(); g.moveTo(L, y(a[1])); g.lineTo(W - R, y(a[1])); g.stroke(); g.setLineDash([]);
+      g.fillStyle = a[2]; g.textAlign = 'left'; g.fillText(a[0] + ' ' + fx(a[1] * S.kurs), L + 4, y(a[1]) - 7); });
+    g.font = 'bold 13px system-ui'; g.fillStyle = col; g.textAlign = 'right'; g.fillText(pos.txt, W - R - 6, Math.max(T + 12, Math.min(yE, yP) - 9)); g.font = '11px system-ui';
+  }
   if (lv) [['e', 'Entry', inkC], ['stop', 'Stop', badC], ['t1', 'T1', goodC], ['t2', 'T2', goodC]].forEach(a => {
     const p = lv[a[0]]; if (!p || p < lo || p > hi) return; g.strokeStyle = a[2]; g.setLineDash([5, 4]); g.beginPath(); g.moveTo(L, y(p)); g.lineTo(W - R, y(p)); g.stroke(); g.setLineDash([]);
     g.fillStyle = a[2]; g.textAlign = 'left'; g.fillText(a[1], L + 4, y(p) - 7); });
   g.fillStyle = inkC; g.textAlign = 'center';
   for (let t = 0; t <= 4; t++) { const i = from + Math.round((cnt - 1) * t / 4), dt = new Date(d.t[i]); g.fillText(dt.getUTCDate() + '/' + (dt.getUTCMonth() + 1), Math.min(Math.max(x(i), 22), W - R - 10), H - 8); }
+}
+
+/* ---------- grafik mini watchlist ---------- */
+function renderMini() {
+  const ks = urutan(), card = $('#miniCard'); card.hidden = !ks.length; if (!ks.length) return;
+  $('#miniGrid').innerHTML = ks.map(k => {
+    const v = S.views[k], pos = posisiKoin(k, v);
+    return `<div class="mini ${k === S.sel ? 'sel' : ''}" data-k="${k}" tabindex="0"><div class="hd"><b>${k}</b><span><b>${S.kurs ? 'Rp ' + rp(v.price * S.kurs) : fx(v.price) + ' USDT'}</b></span></div>
+      <div class="hd note"><span class="${v.chg7 >= 0 ? 'good' : 'bad'}">7h ${pct(v.chg7)}</span><span class="badge ${v.vd.cls}">${v.vd.t}</span></div>
+      <div class="note ${pos ? (pos.laba >= 0 ? 'good' : 'bad') : ''}" style="min-height:18px">${pos ? '<b>' + esc(pos.txt) + '</b> · modal Rp ' + fi(pos.modal) : 'belum dimiliki'}</div>
+      <canvas data-mc="${k}"></canvas></div>`;
+  }).join('');
+  requestAnimationFrame(() => ks.forEach(k => gambarMini(document.querySelector(`canvas[data-mc="${k}"]`), S.views[k], posisiKoin(k, S.views[k]))));
+}
+function gambarMini(cv, v, pos) {
+  if (!cv || !v || !v.ok) return;
+  const dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight; if (!W) return;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+  const d = v.full, n = d.c.length, from = Math.max(0, n - 60), c = d.c.slice(from);
+  let lo = Math.min.apply(null, c), hi = Math.max.apply(null, c);
+  if (pos) { lo = Math.min(lo, pos.entry, pos.stop || Infinity); hi = Math.max(hi, pos.entry, pos.target || 0); }
+  const pad = (hi - lo) * 0.08 || hi * 0.01; lo -= pad; hi += pad;
+  const X = i => 4 + i * (W - 8) / Math.max(c.length - 1, 1), Y = p => 4 + (hi - p) / (hi - lo) * (H - 8);
+  const naik = c[c.length - 1] >= c[0], col = css(naik ? '--good' : '--bad');
+  g.beginPath(); c.forEach((p, i) => { i ? g.lineTo(X(i), Y(p)) : g.moveTo(X(i), Y(p)); });
+  g.lineTo(X(c.length - 1), H); g.lineTo(X(0), H); g.closePath(); g.globalAlpha = 0.12; g.fillStyle = col; g.fill(); g.globalAlpha = 1;
+  g.beginPath(); c.forEach((p, i) => { i ? g.lineTo(X(i), Y(p)) : g.moveTo(X(i), Y(p)); }); g.strokeStyle = col; g.lineWidth = 1.6; g.stroke(); g.lineWidth = 1;
+  if (pos) {
+    [['Beli', pos.entry, css('--s3')], ['Stop', pos.stop, css('--bad')], ['Target', pos.target, css('--good')]].forEach(a => {
+      if (!a[1]) return; g.strokeStyle = a[2]; g.setLineDash([4, 3]); g.beginPath(); g.moveTo(0, Y(a[1])); g.lineTo(W, Y(a[1])); g.stroke(); g.setLineDash([]);
+      g.fillStyle = a[2]; g.font = '10px system-ui'; g.textAlign = 'left'; g.fillText(a[0], 4, Y(a[1]) - 3); });
+  }
+  g.fillStyle = col; g.beginPath(); g.arc(X(c.length - 1), Y(c[c.length - 1]), 3, 0, 6.3); g.fill();
 }
 
 /* ---------- pemindai ---------- */
@@ -996,7 +1066,7 @@ function izinTerpilih(sel) { return Array.from(document.querySelectorAll(sel)).f
 
 /* ---------- event ---------- */
 document.addEventListener('click', async ev => {
-  const t = ev.target.closest('[data-del],[data-add],[data-tutup],[data-jhapus],[data-range],[data-beli],[data-usimpan],[data-ureset],[data-utoggle],[data-uhapus],tr[data-k]'); if (!t) return;
+  const t = ev.target.closest('[data-del],[data-add],[data-tutup],[data-jhapus],[data-range],[data-beli],.mini[data-k],[data-usimpan],[data-ureset],[data-utoggle],[data-uhapus],tr[data-k]'); if (!t) return;
   if (t.dataset.beli) {
     const k = t.dataset.beli, d = $('#jrForm'), v = S.views[k]; d.open = true; $('#jrKode').value = k;
     if (!$('#jrIdr').value && v && v.ok && S.kurs) $('#jrIdr').value = Math.round(v.price * S.kurs);
@@ -1011,7 +1081,7 @@ document.addEventListener('click', async ev => {
   if (t.dataset.tutup) return tutupPos(t.dataset.tutup);
   if (t.dataset.jhapus) { if (!confirm('Hapus catatan ini dari jurnal?')) return; try { await api('jr_hapus', {id: t.dataset.jhapus}); await muat(); } catch (e) { alert(e.message); } return; }
   if (t.dataset.range) { S.range = Number(t.dataset.range); renderDetail(); return; }
-  if (t.dataset.k && !ev.target.closest('button')) { S.sel = t.dataset.k; renderWatch(); renderDetail(); const d = $('#detail'); if (d && !d.hidden) d.scrollIntoView({behavior: 'smooth', block: 'start'}); }
+  if (t.dataset.k && !ev.target.closest('button')) { S.sel = t.dataset.k; renderWatch(); renderMini(); renderDetail(); const d = $('#detail'); if (d && !d.hidden) d.scrollIntoView({behavior: 'smooth', block: 'start'}); }
 });
 document.addEventListener('change', ev => {
   if (ev.target.id === 'chk200') { S.sma200 = ev.target.checked; renderDetail(); }
@@ -1039,8 +1109,8 @@ $('#admBuat').onclick = () => {
 };
 $('#admBotSimpan').onclick = () => admAksi('adm_bot', {token: $('#admBotTok').value}, () => { $('#admBotTok').value = ''; $('#admBotMsg').textContent = 'Bot tersimpan.'; muat(); });
 $('#admBotHapus').onclick = () => { if (confirm('Lepas bot Telegram? Semua alert berhenti.')) admAksi('adm_bot', {token: ''}, () => { $('#admBotMsg').textContent = 'Bot dilepas.'; muat(); }); };
-$('#btnTema').onclick = () => { const r = document.documentElement, t = r.dataset.theme === 'dark' ? 'light' : 'dark'; r.dataset.theme = t; try { localStorage.setItem('rk_tema', t); } catch (e) {} renderDetail(); };
-window.addEventListener('resize', () => { const v = S.views[S.sel]; if (v && v.ok) renderDetail(); });
+$('#btnTema').onclick = () => { const r = document.documentElement, t = r.dataset.theme === 'dark' ? 'light' : 'dark'; r.dataset.theme = t; try { localStorage.setItem('rk_tema', t); } catch (e) {} renderDetail(); if (S.data) renderMini(); };
+window.addEventListener('resize', () => { const v = S.views[S.sel]; if (v && v.ok) { renderDetail(); renderMini(); } });
 
 /* ---------- mulai ---------- */
 (function () {

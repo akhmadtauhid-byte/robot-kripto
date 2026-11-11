@@ -74,6 +74,12 @@ canvas{width:100%;height:340px;display:block;background:var(--bg);border:1px sol
 .comp{display:grid;grid-template-columns:170px 70px 1fr;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid var(--line);font-size:13px}
 @media(max-width:620px){.comp{grid-template-columns:1fr}}
 .authbox{max-width:360px}
+.pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px;margin:8px 0}
+.pcard{border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:var(--bg)}
+.pcard b{font-size:15px} .pcard .pm{display:flex;justify-content:space-between;align-items:baseline;gap:6px}
+.pcard canvas.pc{height:84px;border:0;background:transparent;margin-top:4px}
+.pbar{height:5px;border-radius:3px;background:var(--line);overflow:hidden;margin-top:4px}.pbar i{display:block;height:100%;border-radius:3px;background:var(--warn)}
+canvas.sk{width:110px;height:34px;border:0;background:transparent;display:inline-block;vertical-align:middle}
 .minigrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}
 .mini{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--bg);cursor:pointer}
 .mini.sel{border-color:var(--s1)}
@@ -182,6 +188,8 @@ tr.nonaktif td{opacity:.55}
       <label class="chk"><input type="checkbox" id="scanKand"> Hanya kandidat beli</label>
       <span class="note" id="scanMsg" role="status"></span>
     </div>
+    <div class="note" id="pulseNote" hidden style="margin-top:8px"><b>Denyut pasar</b>: 8 koin dengan skor potensi tertinggi. Garis = harga penutupan 30 hari terakhir (data asli). Kecepatan dan getaran di ujung garis hanyalah efek visual; makin cepat berarti intensitas makin tinggi (volume melonjak, gerak 24 jam besar, ATR lebar).</div>
+    <div class="pgrid" id="pulseOut"></div>
     <div class="tblwrap" id="scanOut" style="margin-top:8px"></div>
   </div>
 
@@ -967,7 +975,7 @@ function tampilAuth(mode, err) {
   ['#inPass', '#inPass2', '#inLama'].forEach(i => { $(i).value = ''; });
 }
 function keluar(pesan) {
-  S.tok = ''; S.user = null; S.data = null; S.scan = null; S.views = {}; S.sel = null;
+  S.tok = ''; S.user = null; S.data = null; S.scan = null; S.autoScan = false; S.views = {}; S.sel = null;
   try { localStorage.removeItem('rk_tok'); } catch (e) {}
   tampilAuth('login', pesan || '');
 }
@@ -1007,7 +1015,8 @@ async function muat(diam) {
     if (!S.sel || !S.views[S.sel]) S.sel = urutan()[0] || null;
     renderAll();
     if (bisa('admin')) muatAdmin();
-  } catch (e) { if (!diam) setMsg(e.message, true); }
+    if (!S.autoScan && bisa('pindai')) { S.autoScan = true; pindai(false); } // pemindai otomatis berjalan setiap aplikasi dibuka
+  } catch (e) { if (!diam) { setMsg(e.message, true); if (!$('#authCard').hidden || $('#appView').hidden) { $('#authErr').textContent = 'Berhasil masuk, tetapi data gagal dimuat: ' + e.message; $('#authCard').hidden = false; } } }
   if (!diam) kunci(false);
 }
 function hitungSemua() {
@@ -1294,19 +1303,79 @@ function renderScan() {
   const el = $('#scanOut'), sc = S.scan; if (!sc) { el.innerHTML = '<p class="note">Klik "Pindai sekarang".</p>'; return; }
   const rows = sc.baris.filter(r => !$('#scanKand').checked || r.kand);
   let h = `<p class="note">Pasar BTC: <b class="${sc.pasar.cls}">${esc(sc.pasar.lvl)}</b>. ${rows.length} dari ${sc.baris.length} koin ditampilkan${sc.gagal.length ? '; data gagal: ' + esc(sc.gagal.join(', ')) : ''}.</p>
-  <table><tr><th>Koin</th><th class="num">Harga (USDT)</th><th class="num">24j</th><th class="num">7h</th><th>Skor</th><th>Potensi</th><th class="num">Vol ×</th><th>Kandidat?</th><th>Setup</th><th>Risiko</th><th>Alasan potensi</th><th></th></tr>`;
+  <table><tr><th>Koin</th><th class="num">Harga (USDT)</th><th class="num">24j</th><th class="num">7h</th><th>Skor</th><th>Potensi</th><th class="num">Vol ×</th><th>Kandidat?</th><th>Gerak 30h</th><th>Setup</th><th>Risiko</th><th>Alasan potensi</th><th></th></tr>`;
   rows.forEach(r => {
     const ada = S.views[r.k] && S.views[r.k].wl;
     h += `<tr><td><b>${esc(r.k)}</b></td><td class="num">${fx(r.price)}</td><td class="num ${r.chg24 >= 0 ? 'good' : 'bad'}">${pct(r.chg24)}</td><td class="num ${r.chg7 >= 0 ? 'good' : 'bad'}">${pct(r.chg7)}</td>
       <td>${r.score.toFixed(0)} <span class="note">${esc(r.vd)}</span></td><td class="${r.pts >= 65 ? 'good' : r.pts >= 45 ? 'warn' : ''}"><b>${r.pts}</b> ${esc(r.lbl)}</td>
       <td class="num">${r.vr == null ? '–' : r.vr.toFixed(1).replace('.', ',')}</td><td title="${esc((r.alasan || []).join('; '))}" class="${r.kand ? 'good' : 'warn'}">${r.kand ? 'Ya' : 'Belum'}</td>
+      <td><canvas class="sk" data-sp="${esc(r.k)}"></canvas></td>
       <td style="white-space:normal;min-width:130px">${(r.st || []).map(i => `<span class="chip">${esc(ENG.SETUP_NAMA[i] || i)}</span>`).join('') || '<span class="note">–</span>'}</td><td class="${r.rk === 'RENDAH' ? 'good' : r.rk === 'SEDANG' ? 'warn' : 'bad'}">${esc(r.rk || '–')}</td>
       <td style="white-space:normal;min-width:200px">${r.tags.map(t => `<span class="chip">${esc(t)}</span>`).join('')}</td>
       <td>${ada ? '<span class="note">dipantau</span>' : bisa('watchlist') ? `<button class="seg" data-add="${esc(r.k)}">Pantau</button>` : ''}</td></tr>`;
   });
-  el.innerHTML = h + '</table>';
+  el.innerHTML = h + '</table>'; renderPulse(); animMulai();
 }
 
+
+
+/* ---------- animasi denyut pasar ---------- */
+const ANIM = {raf: 0, items: [], t0: 0};
+function intensitas(r) {
+  const vr = r.vr == null ? 1 : r.vr, ch = Math.abs(r.chg24 || 0), ap = r.ap || 0.03;
+  return Math.max(0, Math.min(1, Math.min(vr / 3, 1) * 0.45 + Math.min(ch / 0.08, 1) * 0.3 + Math.min(ap / 0.08, 1) * 0.25));
+}
+function renderPulse() {
+  const el = $('#pulseOut'), sc = S.scan; if (!el) return;
+  const top = sc ? sc.baris.filter(r => r.sp && r.sp.length > 5).slice(0, 8) : [];
+  $('#pulseNote').hidden = !top.length;
+  el.innerHTML = top.map(r => {
+    const I = intensitas(r), lb = I >= 0.66 ? 'Intensitas tinggi' : I >= 0.33 ? 'Intensitas sedang' : 'Tenang';
+    return `<div class="pcard"><div class="pm"><b>${esc(r.k)}</b><span class="${r.chg24 >= 0 ? 'good' : 'bad'}">${pct(r.chg24)}</span></div>
+      <div class="note">${fx(r.price)} USDT · ${esc(lb)}</div><div class="pbar"><i style="width:${Math.round(I * 100)}%"></i></div>
+      <canvas class="pc" data-sp="${esc(r.k)}" aria-label="Grafik 30 hari ${esc(r.k)}"></canvas></div>`;
+  }).join('');
+}
+function warna(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim() || '#26d07c'; }
+function animMulai() {
+  cancelAnimationFrame(ANIM.raf); ANIM.items = []; const sc = S.scan; if (!sc) return;
+  const by = {}; sc.baris.forEach(r => { by[r.k] = r; });
+  document.querySelectorAll('canvas[data-sp]').forEach(cv => {
+    const r = by[cv.dataset.sp]; if (!r || !r.sp || r.sp.length < 6) return;
+    const dpr = window.devicePixelRatio || 1, w = cv.clientWidth || 110, h = cv.clientHeight || 34;
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    ANIM.items.push({cv, ctx: cv.getContext('2d'), d: r.sp, I: intensitas(r), w, h, dpr, naik: r.sp[r.sp.length - 1] >= r.sp[0], besar: cv.classList.contains('pc'), fase: Math.random() * 6});
+  });
+  ANIM.t0 = performance.now();
+  const diam = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const gambar = (t) => {
+    if (!ANIM.items.length) return;
+    if (!document.hidden) {
+      const gd = warna('--good'), bd = warna('--bad'), dt = (t - ANIM.t0) / 1000, prog = diam ? 1 : Math.min(1, dt / 1.4);
+      ANIM.items = ANIM.items.filter(it => document.body.contains(it.cv));
+      ANIM.items.forEach(it => {
+        const {ctx, d, w, h, I} = it, c = it.naik ? gd : bd, pad = it.besar ? 6 : 3;
+        ctx.setTransform(it.dpr, 0, 0, it.dpr, 0, 0); ctx.clearRect(0, 0, w, h);
+        let lo = Math.min.apply(null, d), hi = Math.max.apply(null, d); if (hi === lo) hi = lo + 1;
+        const n = d.length, X = i => pad + (w - 2 * pad) * i / (n - 1), amp = (h - 2 * pad) * (0.015 + 0.06 * I);
+        const Y = (i, live) => { let y = h - pad - (h - 2 * pad) * (d[i] - lo) / (hi - lo); if (live && !diam) { const k = (i - (n - 8)) / 8; if (k > 0) y += Math.sin(dt * (2.5 + 7 * I) + it.fase + i * 0.9) * amp * k; } return y; };
+        const upto = (n - 1) * prog, pts = [];
+        for (let i = 0; i <= Math.floor(upto); i++) pts.push([X(i), Y(i, prog >= 1)]);
+        if (upto < n - 1) { const i = Math.floor(upto), f = upto - i; pts.push([X(i) + (X(i + 1) - X(i)) * f, Y(i, false) + (Y(i + 1, false) - Y(i, false)) * f]); }
+        if (pts.length < 2) return;
+        const g = ctx.createLinearGradient(0, 0, 0, h); g.addColorStop(0, c + '55'); g.addColorStop(1, c + '00');
+        ctx.beginPath(); ctx.moveTo(pts[0][0], h); pts.forEach(p => ctx.lineTo(p[0], p[1])); ctx.lineTo(pts[pts.length - 1][0], h); ctx.closePath(); ctx.fillStyle = g; ctx.fill();
+        ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.strokeStyle = c; ctx.lineWidth = it.besar ? 2 : 1.4; ctx.lineJoin = 'round'; ctx.stroke();
+        const e = pts[pts.length - 1], pul = diam ? 0 : (Math.sin(dt * (3 + 8 * I) + it.fase) + 1) / 2;
+        ctx.beginPath(); ctx.arc(e[0], e[1], (it.besar ? 3 : 2) + pul * (it.besar ? 6 : 3) * (0.4 + I), 0, 6.283); ctx.fillStyle = c + '44'; ctx.fill();
+        ctx.beginPath(); ctx.arc(e[0], e[1], it.besar ? 3 : 2, 0, 6.283); ctx.fillStyle = c; ctx.fill();
+      });
+    }
+    if (!diam || prog < 1) ANIM.raf = requestAnimationFrame(gambar);
+  };
+  ANIM.raf = requestAnimationFrame(gambar);
+}
+window.addEventListener('resize', () => { if (S.scan) animMulai(); });
 
 /* ---------- radar saran ---------- */
 function rdSetupHtml(a) {

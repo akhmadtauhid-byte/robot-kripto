@@ -161,6 +161,18 @@ tr.nonaktif td{opacity:.55}
   </div>
 
 
+  <div class="card" data-izin="watchlist" id="radarCard">
+    <h3>Radar saran koin baru</h3>
+    <p class="note" style="margin-top:0">Ada koin yang disarankan teman atau media tetapi tidak muncul di pemindai? Masukkan kodenya di sini. Robot mengambil datanya (Binance, Coinbase, atau OKX), mencari setup, membandingkan dengan BTC, menilai risiko pump, lalu memberi putusan. Radar tidak masuk perhitungan posisi; pindahkan ke watchlist bila sudah yakin. Maksimal 20 koin.</p>
+    <div class="row" style="align-items:center">
+      <input id="rdKode" placeholder="Kode koin, mis. WIF" maxlength="12" style="max-width:150px" aria-label="Kode koin untuk radar">
+      <input id="rdCat" placeholder="Catatan (siapa yang menyarankan, alasannya)" maxlength="120" style="flex:1;min-width:180px" aria-label="Catatan saran">
+      <button class="primary" id="btnRadar">Tambah ke Radar</button>
+      <span class="note" id="rdMsg" role="status"></span>
+    </div>
+    <div class="tblwrap" id="radarOut" style="margin-top:8px"></div>
+  </div>
+
   <div class="card" data-izin="pindai">
     <h3>Pemindai potensi naik (28 koin besar)</h3>
     <p class="note" style="margin-top:0">Memeriksa volume yang melonjak saat harga naik, dekat/menembus high 20 hari, dan tren pendukung. Penyaring awal, bukan jaminan harga naik. Pastikan koinnya tersedia di Ajaib sebelum membeli.</p>
@@ -785,7 +797,129 @@ const ENG = (function () {
     return {all: stat(t), sesuai: stat(sesuai), tidak: stat(tidak), disiplin: stat(disiplin), longgar: stat(longgar)};
   }
 
-  return {W, DAY, clamp, fx, fi, pct, qtyDec, expand, split, sma, ema, rsi, atr, analyze, scoreAt, verdict, view, pasar, potensi, kandidat, plan, backtest, rapor, view4, expand4, ajaib, gerak15, ulasNaik, rencanaPosisi, kf};
+
+  /* ---------- v2.7: radar koin baru (setup, kekuatan relatif, risiko, bukti historis) ---------- */
+  const SETUP_NAMA = {breakout: 'Breakout high 20 hari', pullback: 'Pullback di tren naik', squeeze: 'Squeeze (volatilitas menyempit)', momentum: 'Momentum + kuat vs BTC', rebound: 'Pantulan dari jenuh jual'};
+  function bbLebar(c, i, n) { // lebar Bollinger relatif (2 simpangan baku / SMA)
+    if (i < n - 1) return null;
+    let m = 0; for (let j = i - n + 1; j <= i; j++) m += c[j]; m /= n;
+    let q = 0; for (let j = i - n + 1; j <= i; j++) q += (c[j] - m) * (c[j] - m);
+    return m > 0 ? 4 * Math.sqrt(q / n) / m : null;
+  }
+  // deteksi setup pada candle indeks i (tanpa melihat masa depan). relBtc = selisih return 30 hari vs BTC (boleh null)
+  function setupsAt(d, I, i, relBtc) {
+    const out = [];
+    if (i < 60) return out;
+    const c = d.c[i], s20 = I.sma20[i], s50 = I.sma50[i], r = I.rsi[i];
+    if (s20 == null || s50 == null || r == null) return out;
+    let hi = -Infinity, vs = 0; for (let j = i - 20; j < i; j++) { hi = Math.max(hi, d.h[j]); vs += d.v[j]; } vs /= 20;
+    const vr = vs > 0 ? d.v[i] / vs : 0;
+    if (c > hi && vr >= 1.3 && c > s50 && r < 78) out.push('breakout');
+    if (s20 > s50 && c > s50 && d.l[i] <= s20 * 1.01 && c >= s20 * 0.98 && c > d.o[i] && r >= 38 && r <= 58) out.push('pullback');
+    const w = bbLebar(d.c, i, 20);
+    if (w != null) {
+      let lo = Infinity, cnt = 0, tot = 0;
+      for (let j = i - 59; j <= i; j++) { const x = bbLebar(d.c, j, 20); if (x != null) { tot++; if (x <= w) cnt++; } lo = Math.min(lo, x == null ? Infinity : x); }
+      if (tot >= 40 && cnt / tot <= 0.2 && c > s20 && c >= d.c[i - 1]) out.push('squeeze');
+    }
+    const r30 = d.c[i - 30] > 0 ? c / d.c[i - 30] - 1 : 0;
+    if (r30 >= 0.10 && c > s20 && s20 > s50 && r < 75 && (relBtc == null || relBtc >= 0.05)) out.push('momentum');
+    let minR = Infinity; for (let j = i - 5; j < i; j++) if (I.rsi[j] != null) minR = Math.min(minR, I.rsi[j]);
+    if (minR < 32 && c > d.c[i - 1] && c > d.o[i] && r > minR + 4) out.push('rebound');
+    return out;
+  }
+  function relatif(v, vBtc) {
+    if (!v || !v.ok || !vBtc || !vBtc.ok) return {rel7: null, rel30: null};
+    const f = (x, k) => { const a = x.cd.c, n = x.n; return n >= k && a[n - k] > 0 ? x.price / a[n - k] - 1 : null; };
+    const a7 = f(v, 7), b7 = f(vBtc, 7), a30 = f(v, 30), b30 = f(vBtc, 30);
+    return {rel7: a7 != null && b7 != null ? a7 - b7 : null, rel30: a30 != null && b30 != null ? a30 - b30 : null, r30: a30};
+  }
+  function risikoKoin(v, cfg) {
+    const al = [], d = v.cd, n = v.n; let lv = 0;
+    const naik = (k, t) => { if (lv < k) lv = k; al.push(t); };
+    const umur = d.c.length;
+    if (v.liq < 2.5e5) naik(3, 'Nilai transaksi harian sangat kecil (≈ ' + fx(v.liq / 1e3) + ' ribu USD), mudah dimanipulasi');
+    else if (v.liq < 1e6) naik(2, 'Nilai transaksi harian kecil (≈ ' + fx(v.liq / 1e6) + ' juta USD)');
+    else if (v.liq < 5e6) naik(1, 'Likuiditas sedang (≈ ' + fx(v.liq / 1e6) + ' juta USD per hari)');
+    if (umur < 90) naik(2, 'Riwayat harga pendek (' + umur + ' hari), belum teruji');
+    const c1 = n > 0 ? d.c[n] / d.c[n - 1] - 1 : 0;
+    if ((v.chg7 != null && v.chg7 > 0.6) || c1 > 0.25) naik(3, 'Kenaikan sangat tajam (7 hari ' + pct(v.chg7) + '), pola khas pump sebelum jatuh');
+    else if (v.chg7 != null && v.chg7 > 0.3) naik(2, 'Sudah naik cukup tinggi dalam 7 hari (' + pct(v.chg7) + '), rawan koreksi');
+    const a = v.I.atr[n], ap = a != null && v.price > 0 ? a / v.price : null;
+    if (ap != null && ap > 0.09) naik(2, 'Gerak harian sangat liar (ATR ≈ ' + pct(ap) + ' dari harga)');
+    else if (ap != null && ap > 0.055) naik(1, 'Gerak harian besar (ATR ≈ ' + pct(ap) + ')');
+    let vs = 0; for (let j = n - 20; j < n; j++) vs += d.v[j]; vs /= 20;
+    if (vs > 0 && d.v[n] / vs >= 6 && c1 > 0.15) naik(3, 'Volume melonjak ≥6× rata-rata bersama lonjakan harga');
+    return {lv, kelas: ['RENDAH', 'SEDANG', 'TINGGI', 'EKSTREM'][lv], cls: lv === 0 ? 'good' : lv === 1 ? 'warn' : 'bad', alasan: al, atrPct: ap};
+  }
+  // bukti historis tiap setup pada koin yang sama: return maju H hari setelah sinyal, sudah dipotong biaya (fee + slippage)
+  function buktiSetup(v, vBtc, cfg, H) {
+    H = H || 7;
+    const d = v.cd, I = v.I, n = v.n, biaya = (cfg.feeB || 0) + (cfg.feeS || 0) + 2 * (cfg.slip || 0), hasil = {};
+    const last = {};
+    for (let i = 60; i <= n - H; i++) {
+      const ids = setupsAt(d, I, i, null);
+      ids.forEach(id => {
+        if (last[id] != null && i - last[id] < 5) return; last[id] = i;
+        const ret = d.c[i + H] / d.c[i] - 1 - biaya;
+        (hasil[id] = hasil[id] || []).push(ret);
+      });
+    }
+    const out = {};
+    Object.keys(SETUP_NAMA).forEach(id => {
+      const a = hasil[id] || [];
+      if (!a.length) { out[id] = {n: 0, win: null, avg: null, med: null}; return; }
+      const so = a.slice().sort((x, y) => x - y);
+      out[id] = {n: a.length, win: a.filter(x => x > 0).length / a.length, avg: a.reduce((x, y) => x + y, 0) / a.length, med: so[Math.floor(so.length / 2)]};
+    });
+    return {H, biaya, per: out};
+  }
+  function ketSetup(id, v, rel) {
+    const d = v.cd, n = v.n;
+    switch (id) {
+      case 'breakout': return 'Harga menembus high 20 hari dengan volume di atas rata-rata. Sinyal lanjut naik, tetapi rawan gagal bila volume cepat surut.';
+      case 'pullback': return 'Tren naik (SMA20 > SMA50), harga menyentuh SMA20 lalu memantul. Titik masuk lebih dekat ke stop dibanding mengejar harga.';
+      case 'squeeze': return 'Rentang harga menyempit ke tingkat terendah 60 hari. Hanya tanda bahwa gerakan besar bisa datang; arah baru terkonfirmasi bila harga naik dengan volume.';
+      case 'momentum': return 'Naik ≥10% dalam 30 hari, di atas SMA20 > SMA50' + (rel && rel.rel30 != null ? ', unggul ' + pct(rel.rel30) + ' dari BTC dalam 30 hari' : '') + '. Momentum cenderung bertahan pada koin yang likuid.';
+      case 'rebound': return 'RSI sempat di bawah 32 lalu harga berbalik naik. Melawan tren, sehingga ukuran posisi harus kecil dan stop ketat.';
+    }
+    return '';
+  }
+  function radar(v, vBtc, cfg, ps) {
+    if (!v || !v.ok) return {ok: false, ringkas: 'Data belum cukup (butuh minimal 40 hari).'};
+    const rel = relatif(v, vBtc), pt = potensi(v), rk = risikoKoin(v, cfg), kd = kandidat(v, cfg, ps);
+    const aktifIds = setupsAt(v.cd, v.I, v.n, rel.rel30);
+    const bukti = buktiSetup(v, vBtc, cfg, 7);
+    const aktif = aktifIds.map(id => {
+      const b = bukti.per[id];
+      const nilai = b.n >= 5 ? (b.avg > 0 && b.win >= 0.5 ? 'mendukung' : b.avg < 0 ? 'melemahkan' : 'netral') : 'sampel terlalu kecil';
+      return {id, nama: SETUP_NAMA[id], ket: ketSetup(id, v, rel), bukti: b, nilai};
+    });
+    let skor = pt.pts * 0.55 + clamp(v.score, -50, 50) * 0.4 + 10;
+    if (rel.rel30 != null) skor += clamp(rel.rel30 * 40, -8, 8);
+    aktif.forEach(a => { skor += a.nilai === 'mendukung' ? 6 : a.nilai === 'melemahkan' ? -8 : 2; });
+    skor -= [0, 3, 14, 40][rk.lv];
+    if (ps && ps.ketat) skor -= 8;
+    skor = clamp(Math.round(skor), 0, 100);
+    let putusan, cls;
+    if (rk.lv >= 3) { putusan = 'HINDARI: risiko ekstrem'; cls = 'bad'; }
+    else if (!aktif.length && !kd.ok) { putusan = 'BELUM ADA SETUP, pantau saja'; cls = 'warn'; }
+    else if (kd.ok && aktif.length && rk.lv <= 1) { putusan = 'LAYAK DIPERTIMBANGKAN'; cls = 'good'; }
+    else if (aktif.length) { putusan = 'ADA SETUP, tapi syarat belum lengkap'; cls = 'warn'; }
+    else { putusan = 'PANTAU, tunggu setup'; cls = 'warn'; }
+    const alasan = [];
+    if (!kd.ok) kd.alasan.forEach(x => alasan.push(x));
+    rk.alasan.forEach(x => alasan.push(x));
+    return {ok: true, skor, putusan, cls, aktif, rel, risiko: rk, potensi: pt, kand: kd, bukti, alasan,
+      ringkas: putusan + ' (skor radar ' + skor + '/100, risiko ' + rk.kelas + (aktif.length ? ', setup: ' + aktif.map(a => a.nama).join(', ') : ', tanpa setup aktif') + ').'};
+  }
+  function setupAktifCepat(v, vBtc) { // untuk tabel pemindai: hanya setup aktif, tanpa bukti
+    if (!v || !v.ok) return [];
+    const rel = relatif(v, vBtc);
+    return setupsAt(v.cd, v.I, v.n, rel.rel30);
+  }
+
+  return {W, DAY, clamp, fx, fi, pct, qtyDec, expand, split, sma, ema, rsi, atr, analyze, scoreAt, verdict, view, pasar, potensi, kandidat, plan, backtest, rapor, view4, expand4, ajaib, gerak15, ulasNaik, rencanaPosisi, kf, radar, setupsAt, setupAktifCepat, SETUP_NAMA, risikoKoin, relatif, buktiSetup};
 })();
 
 
@@ -937,7 +1071,7 @@ function ringkasKoin(k, rows, v, kd) {
 }
 
 /* ---------- render ---------- */
-function renderAll() { renderPasar(); renderCfg(); renderWatch(); renderDetail(); renderScan(); renderPos(); renderJurnal(); renderTg(); renderMini(); }
+function renderAll() { renderPasar(); renderCfg(); renderWatch(); renderDetail(); renderScan(); renderRadar(); renderPos(); renderJurnal(); renderTg(); renderMini(); }
 function renderTg() {
   const t = S.data.tg; $('#tgChat').value = t.chatId || '';
   $('#tgInfo').textContent = t.bot ? 'Bot sudah dipasang admin' + (t.botNama ? ' (@' + t.botNama + ')' : '') + '. Buka bot itu di Telegram, tekan Start, lalu cari Chat ID Anda (misalnya lewat bot @userinfobot) dan isi di bawah. Alert posisi dan kandidat beli akan dikirim ke Chat ID ini.' : 'Admin belum memasang bot Telegram. Minta admin mengisi token bot terlebih dahulu.';
@@ -1160,16 +1294,53 @@ function renderScan() {
   const el = $('#scanOut'), sc = S.scan; if (!sc) { el.innerHTML = '<p class="note">Klik "Pindai sekarang".</p>'; return; }
   const rows = sc.baris.filter(r => !$('#scanKand').checked || r.kand);
   let h = `<p class="note">Pasar BTC: <b class="${sc.pasar.cls}">${esc(sc.pasar.lvl)}</b>. ${rows.length} dari ${sc.baris.length} koin ditampilkan${sc.gagal.length ? '; data gagal: ' + esc(sc.gagal.join(', ')) : ''}.</p>
-  <table><tr><th>Koin</th><th class="num">Harga (USDT)</th><th class="num">24j</th><th class="num">7h</th><th>Skor</th><th>Potensi</th><th class="num">Vol ×</th><th>Kandidat?</th><th>Alasan potensi</th><th></th></tr>`;
+  <table><tr><th>Koin</th><th class="num">Harga (USDT)</th><th class="num">24j</th><th class="num">7h</th><th>Skor</th><th>Potensi</th><th class="num">Vol ×</th><th>Kandidat?</th><th>Setup</th><th>Risiko</th><th>Alasan potensi</th><th></th></tr>`;
   rows.forEach(r => {
     const ada = S.views[r.k] && S.views[r.k].wl;
     h += `<tr><td><b>${esc(r.k)}</b></td><td class="num">${fx(r.price)}</td><td class="num ${r.chg24 >= 0 ? 'good' : 'bad'}">${pct(r.chg24)}</td><td class="num ${r.chg7 >= 0 ? 'good' : 'bad'}">${pct(r.chg7)}</td>
       <td>${r.score.toFixed(0)} <span class="note">${esc(r.vd)}</span></td><td class="${r.pts >= 65 ? 'good' : r.pts >= 45 ? 'warn' : ''}"><b>${r.pts}</b> ${esc(r.lbl)}</td>
       <td class="num">${r.vr == null ? '–' : r.vr.toFixed(1).replace('.', ',')}</td><td title="${esc((r.alasan || []).join('; '))}" class="${r.kand ? 'good' : 'warn'}">${r.kand ? 'Ya' : 'Belum'}</td>
+      <td style="white-space:normal;min-width:130px">${(r.st || []).map(i => `<span class="chip">${esc(ENG.SETUP_NAMA[i] || i)}</span>`).join('') || '<span class="note">–</span>'}</td><td class="${r.rk === 'RENDAH' ? 'good' : r.rk === 'SEDANG' ? 'warn' : 'bad'}">${esc(r.rk || '–')}</td>
       <td style="white-space:normal;min-width:200px">${r.tags.map(t => `<span class="chip">${esc(t)}</span>`).join('')}</td>
       <td>${ada ? '<span class="note">dipantau</span>' : bisa('watchlist') ? `<button class="seg" data-add="${esc(r.k)}">Pantau</button>` : ''}</td></tr>`;
   });
   el.innerHTML = h + '</table>';
+}
+
+
+/* ---------- radar saran ---------- */
+function rdSetupHtml(a) {
+  const b = a.bukti, cl = a.nilai === 'mendukung' ? 'good' : a.nilai === 'melemahkan' ? 'bad' : 'warn';
+  const ev = b.n ? `Pada riwayat koin ini: ${b.n} kali sinyal, ${(b.win * 100).toFixed(0)}% berakhir untung setelah 7 hari, rata-rata ${pct(b.avg)} sesudah biaya (median ${pct(b.med)}).` : 'Belum ada sinyal serupa di riwayat koin ini.';
+  return `<li><b>${esc(a.nama)}</b> <span class="${cl}">(${esc(a.nilai)})</span><br><span class="note">${esc(a.ket)}</span><br><span class="note">${esc(ev)}${b.n && b.n < 5 ? ' Sampel terlalu kecil untuk dipercaya.' : ''}</span></li>`;
+}
+function renderRadar() {
+  const el = $('#radarOut'); if (!el) return;
+  const list = (S.data && S.data.radar) || [];
+  if (!list.length) { el.innerHTML = '<p class="note">Radar masih kosong.</p>'; return; }
+  const cfg = cfgMesin(), btc = S.views.BTC;
+  const rows = list.map(r => ({r, v: S.views[r.k], x: S.views[r.k] && S.views[r.k].ok ? ENG.radar(S.views[r.k], btc, cfg, S.ps) : null}));
+  rows.sort((a, b) => (b.x ? b.x.skor : -1) - (a.x ? a.x.skor : -1));
+  let h = '<table><tr><th>Koin</th><th class="num">Harga (USDT)</th><th class="num">7h</th><th class="num">vs BTC 30h</th><th>Skor radar</th><th>Risiko</th><th>Putusan</th><th></th></tr>';
+  rows.forEach(({r, v, x}) => {
+    if (!x) { h += `<tr><td><b>${esc(r.k)}</b></td><td colspan="6" class="note">Data belum tersedia atau kurang dari 40 hari.</td><td><button class="seg" data-rdhapus="${esc(r.k)}">Hapus</button></td></tr>`; return; }
+    h += `<tr><td><b>${esc(r.k)}</b>${r.catatan ? `<br><span class="note">${esc(r.catatan)}</span>` : ''}</td><td class="num">${fx(v.price)}</td><td class="num ${v.chg7 >= 0 ? 'good' : 'bad'}">${pct(v.chg7)}</td>
+      <td class="num ${x.rel.rel30 >= 0 ? 'good' : 'bad'}">${x.rel.rel30 == null ? '–' : pct(x.rel.rel30)}</td><td><b>${x.skor}</b>/100</td>
+      <td class="${x.risiko.cls}"><b>${esc(x.risiko.kelas)}</b></td><td class="${x.cls}" style="white-space:normal;min-width:170px"><b>${esc(x.putusan)}</b></td>
+      <td style="white-space:nowrap"><button class="seg" data-rdpindah="${esc(r.k)}" title="Masukkan ke watchlist untuk dipantau penuh">Ke watchlist</button> <button class="seg" data-rdhapus="${esc(r.k)}">Hapus</button></td></tr>
+      <tr><td colspan="8" style="white-space:normal"><details><summary class="note">Setup, bukti, dan alasan ${esc(r.k)}</summary>
+        <p class="note"><b>Setup aktif:</b></p>${x.aktif.length ? `<ul>${x.aktif.map(rdSetupHtml).join('')}</ul>` : '<p class="note">Tidak ada setup aktif hari ini.</p>'}
+        <p class="note"><b>Risiko:</b></p>${x.risiko.alasan.length ? `<ul>${x.risiko.alasan.map(t => `<li class="note">${esc(t)}</li>`).join('')}</ul>` : '<p class="note">Tidak ada tanda risiko khusus.</p>'}
+        ${x.kand.ok ? '<p class="good note">Memenuhi semua syarat kandidat beli robot.</p>' : `<p class="note"><b>Syarat kandidat beli yang belum terpenuhi:</b> ${esc(x.kand.alasan.join('; '))}</p>`}
+        <p class="note">Bukti dihitung dari riwayat satu koin saja (sampel kecil) dan bukan jaminan hasil. Sumber data: ${esc(v.src || '-')}. Untuk rencana beli (stop, target, jumlah), pindahkan ke watchlist lalu buka detailnya.</p></details></td></tr>`;
+  });
+  el.innerHTML = h + '</table>';
+}
+async function tambahRadar() {
+  const k = $('#rdKode').value.trim().toUpperCase(); if (!k) { $('#rdMsg').textContent = 'Isi kode koin dulu.'; return; }
+  $('#rdMsg').textContent = 'Memeriksa ' + k + '...';
+  try { await api('radar_tambah', {k, catatan: $('#rdCat').value}); $('#rdKode').value = ''; $('#rdCat').value = ''; await muat(true); $('#rdMsg').textContent = k + ' ditambahkan ke Radar.'; }
+  catch (e) { $('#rdMsg').textContent = e.message; }
 }
 
 /* ---------- posisi & jurnal ---------- */
@@ -1388,7 +1559,7 @@ function izinTerpilih(sel) { return Array.from(document.querySelectorAll(sel)).f
 
 /* ---------- event ---------- */
 document.addEventListener('click', async ev => {
-  const t = ev.target.closest('[data-del],[data-add],[data-tutup],[data-jhapus],[data-range],[data-beli],.mini[data-k],[data-usimpan],[data-ureset],[data-utoggle],[data-uhapus],tr[data-k]'); if (!t) return;
+  const t = ev.target.closest('[data-del],[data-add],[data-tutup],[data-jhapus],[data-range],[data-beli],.mini[data-k],[data-usimpan],[data-ureset],[data-utoggle],[data-uhapus],[data-rdhapus],[data-rdpindah],tr[data-k]'); if (!t) return;
   if (t.dataset.beli) {
     const k = t.dataset.beli, d = $('#jrForm'), v = S.views[k]; d.open = true; $('#jrKode').value = k;
     if (!$('#jrIdr').value && v && v.ok && S.kurs) $('#jrIdr').value = Math.round(v.price * S.kurs);
@@ -1398,6 +1569,8 @@ document.addEventListener('click', async ev => {
   if (t.dataset.ureset) { if (!confirm('Reset sandi pengguna ini? Semua sesi aktifnya akan keluar.')) return; return admAksi('adm_reset', {id: t.dataset.ureset}, j => tampilSandi('Sandi direset', j.username, j.sandiSementara)); }
   if (t.dataset.utoggle) { const on = t.dataset.aktif === '1'; if (!on && !confirm('Nonaktifkan pengguna ini? Ia langsung tidak bisa masuk.')) return; return admAksi('adm_ubah', {id: t.dataset.utoggle, aktif: on}, () => { $('#admHasil').innerHTML = ''; }); }
   if (t.dataset.uhapus) { if (!confirm('Hapus pengguna ini BESERTA watchlist, pengaturan, dan jurnalnya? Tidak bisa dibatalkan.')) return; return admAksi('adm_hapus', {id: t.dataset.uhapus}, () => { $('#admHasil').innerHTML = '<p class="good note">Pengguna dihapus.</p>'; }); }
+  if (t.dataset.rdhapus) { try { await api('radar_hapus', {k: t.dataset.rdhapus}); await muat(true); } catch (e) { $('#rdMsg').textContent = e.message; } return; }
+  if (t.dataset.rdpindah) { try { await api('radar_pindah', {k: t.dataset.rdpindah}); S.sel = t.dataset.rdpindah; await muat(true); $('#rdMsg').textContent = t.dataset.rdpindah + ' dipindah ke watchlist.'; } catch (e) { $('#rdMsg').textContent = e.message; } return; }
   if (t.dataset.del) { if (!confirm('Hapus ' + t.dataset.del + ' dari watchlist?')) return; try { await api('hapus', {k: t.dataset.del}); await muat(); } catch (e) { setMsg(e.message, true); } return; }
   if (t.dataset.add) { try { await api('tambah', {k: t.dataset.add}); await muat(); S.sel = t.dataset.add; renderAll(); } catch (e) { $('#scanMsg').textContent = e.message; } return; }
   if (t.dataset.tutup) return tutupPos(t.dataset.tutup);
@@ -1417,7 +1590,7 @@ document.addEventListener('input', ev => {
   if (['jrNom', 'jrIdr', 'jrQ', 'jrStopIdr', 'jrTpIdr', 'jrKode', 'jrM1', 'jrM2', 'jrM3'].indexOf(id) >= 0) jrRender();
 });
 $('#kode').addEventListener('keydown', e => { if (e.key === 'Enter') tambah(); });
-$('#btnTambah').onclick = tambah; $('#btnMuat').onclick = () => muat(); $('#btnCfg').onclick = simpanCfg; $('#kalOk').onclick = () => kalibrasi(false); $('#autoRef').onchange = () => { try { localStorage.setItem('autoRef', $('#autoRef').checked ? '1' : '0'); } catch (e) {} aturAuto(); };
+$('#btnTambah').onclick = tambah; $('#btnRadar').onclick = tambahRadar; $('#rdKode').addEventListener('keydown', e => { if (e.key === 'Enter') tambahRadar(); }); $('#btnMuat').onclick = () => muat(); $('#btnCfg').onclick = simpanCfg; $('#kalOk').onclick = () => kalibrasi(false); $('#autoRef').onchange = () => { try { localStorage.setItem('autoRef', $('#autoRef').checked ? '1' : '0'); } catch (e) {} aturAuto(); };
 $('#kalAuto').onclick = () => kalibrasi(true); $('#kalPrem').onclick = catatPrem; $('#jrSimpan').onclick = catatBeli; $('#jrIsi').onclick = isiDariRencana;
 $('#btnScan').onclick = () => pindai(false); $('#btnScanBaru').onclick = () => pindai(true);
 $('#btnTgSimpan').onclick = async () => { try { const j = await api('tg_set', {chatId: $('#tgChat').value}); S.data.tg.chatId = j.chatId; $('#tgMsg').textContent = 'Tersimpan.'; } catch (e) { $('#tgMsg').textContent = e.message; } };

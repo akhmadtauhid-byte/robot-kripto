@@ -193,9 +193,22 @@ tr.nonaktif td{opacity:.55}
     <div class="tblwrap" id="scanOut" style="margin-top:8px"></div>
   </div>
 
+  <div class="card" data-izin="pindai" id="rapSinyalCard">
+    <h3>Rapor sinyal robot (bukti nyata)</h3>
+    <p class="note" style="margin-top:0">Setiap kali robot menandai koin sebagai <b>kandidat beli</b> (pemindai, watchlist, atau Radar), sinyalnya dicatat otomatis dengan harga, stop, dan target ketika sinyal muncul. Hasilnya dinilai sendiri oleh robot: stop atau target tersentuh lebih dulu, atau keluar di penutupan hari ke-14. Angka sudah dipotong fee dan selisih harga. Jika stop dan target tersentuh pada hari yang sama, dihitung stop (pesimis). Hanya sinyal yang tercatat sejak fitur ini dipasang, dan hanya pada hari aplikasi dibuka atau pengecekan otomatis berjalan.</p>
+    <div class="row" style="align-items:center"><button id="btnRapSinyal">Muat rapor sinyal</button><span class="note" id="rapSinyalMsg" role="status"></span></div>
+    <div id="rapSinyalOut" style="margin-top:8px"></div>
+  </div>
+
   <div class="card" data-izin="jurnal">
     <h3>Posisi saya (pantauan)</h3>
     <div id="posOut"></div>
+  </div>
+
+  <div class="card" data-izin="jurnal" id="portCard">
+    <h3>Risiko portofolio total</h3>
+    <p class="note" style="margin-top:0">Gabungan risiko semua posisi terbuka. Koin yang bergerak hampir sama (korelasi tinggi) dihitung sebagai satu taruhan. Batas diatur di Pengaturan (Batas total risiko terbuka).</p>
+    <div id="portOut"></div>
   </div>
 
   <div class="card" data-izin="jurnal">
@@ -788,6 +801,140 @@ const ENG = (function () {
       angka: {entry, price, stop, stopBaru, target1, target2, impas, R, rMult, labaPct, jml, jml50, nil50, q, qIdr, stopGabungan: s2, bind}};
   }
 
+
+  /* ---------- v2.8: catatan kinerja sinyal ---------- */
+  // sig: {tanggal 'YYYY-MM-DD', harga, stop, target}; d: candle harian {t(ms),o,h,l,c}; cfg: cfgMesin(). Penilaian pesimis:
+  // bila stop dan target tersentuh pada hari yang sama, dianggap stop lebih dulu. Maksimal maxHari, lalu keluar di penutupan.
+  function nilaiSinyal(sig, d, cfg, maxHari) {
+    maxHari = maxHari || 14;
+    const hs = Math.floor(Date.parse(sig.tanggal + 'T12:00:00Z') / DAY), slip = cfg.slip || 0;
+    const entry = sig.harga * (1 + slip), risk = sig.harga - sig.stop;
+    if (!(entry > 0) || !(risk > 0)) return {selesai: false, alasan: 'rencana tidak valid'};
+    let k = 0, exit = null, hasil = null, hari = 0;
+    for (let i = 0; i < d.t.length; i++) {
+      const hr = Math.floor(d.t[i] / DAY); if (hr <= hs) continue;
+      k++;
+      if (d.l[i] <= sig.stop) { exit = Math.min(d.o[i], sig.stop); hasil = 'STOP'; hari = k; break; }
+      if (sig.target > 0 && d.h[i] >= sig.target) { exit = Math.max(d.o[i], sig.target); hasil = 'TARGET'; hari = k; break; }
+      if (k >= maxHari) { exit = d.c[i]; hasil = 'WAKTU'; hari = k; break; }
+    }
+    if (hasil == null) return {selesai: false, hariBerjalan: k};
+    const keluarNet = exit * (1 - cfg.feeS - slip), masukNet = entry * (1 + cfg.feeB);
+    return {selesai: true, hasil, hari, exit, retPct: keluarNet / masukNet - 1, r: (keluarNet - masukNet) / risk};
+  }
+  function wilson(w, n) { // selang kepercayaan 95% untuk persentase menang
+    if (!n) return [0, 1];
+    const z = 1.96, p = w / n, d = 1 + z * z / n, c = p + z * z / (2 * n), m = z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n));
+    return [Math.max(0, (c - m) / d), Math.min(1, (c + m) / d)];
+  }
+  // list: [{status:'OPEN'|'SELESAI', hasil, r, retPct, setup:'a,b', sumber}]
+  function statSinyal(list) {
+    const sel = list.filter(x => x.status === 'SELESAI' && isFinite(x.r)), n = sel.length;
+    const rs = sel.map(x => x.r), menang = sel.filter(x => x.r > 0), kalah = sel.filter(x => x.r <= 0);
+    const sum = a => a.reduce((x, y) => x + y, 0), avg = a => a.length ? sum(a) / a.length : null;
+    const bruttoMenang = sum(menang.map(x => x.r)), bruttoKalah = -sum(kalah.map(x => x.r));
+    const ci = wilson(menang.length, n), expR = avg(rs);
+    const per = (kunci) => {
+      const m = {}; sel.forEach(x => { String(x[kunci] || '-').split(',').filter(Boolean).concat(String(x[kunci] || '').length ? [] : ['-']).forEach(id => { (m[id] = m[id] || []).push(x); }); });
+      return Object.keys(m).map(id => ({id, n: m[id].length, win: m[id].filter(y => y.r > 0).length / m[id].length, avgR: avg(m[id].map(y => y.r))})).sort((a, b) => b.n - a.n);
+    };
+    let putusan, cls;
+    if (n < 20) { putusan = 'BELUM CUKUP BUKTI (baru ' + n + ' sinyal selesai; butuh minimal 20, idealnya 50)'; cls = 'warn'; }
+    else if (n < 50) { putusan = expR > 0.15 ? 'INDIKASI AWAL POSITIF (sampel masih kecil)' : expR < 0 ? 'INDIKASI AWAL NEGATIF: jangan terlalu percaya sinyal' : 'INDIKASI AWAL TIPIS/NETRAL'; cls = 'warn'; }
+    else { putusan = expR > 0.15 ? 'POSITIF: sinyal punya keunggulan setelah biaya' : expR < 0 ? 'NEGATIF: sinyal merugi setelah biaya, jangan dipakai apa adanya' : 'TIPIS: keunggulan belum jelas setelah biaya'; cls = expR > 0.15 ? 'good' : expR < 0 ? 'bad' : 'warn'; }
+    return {n, terbuka: list.filter(x => x.status !== 'SELESAI').length, total: list.length, menang: menang.length, kalah: kalah.length, winPct: n ? menang.length / n : null, ciLo: ci[0], ciHi: ci[1],
+      avgR: expR, avgMenang: avg(menang.map(x => x.r)), avgKalah: avg(kalah.map(x => x.r)), avgRet: avg(sel.map(x => x.retPct)),
+      profitFactor: bruttoKalah > 0 ? bruttoMenang / bruttoKalah : (bruttoMenang > 0 ? Infinity : null),
+      perSetup: per('setup'), perHasil: ['TARGET', 'STOP', 'WAKTU'].map(h => ({id: h, n: sel.filter(x => x.hasil === h).length})), putusan, cls};
+  }
+
+  /* ---------- v2.8: risiko portofolio ---------- */
+  function korelasi(a, b, n) {
+    n = Math.min(n || 60, a.length - 1, b.length - 1); if (n < 20) return null;
+    const ra = [], rb = [];
+    for (let i = 1; i <= n; i++) { ra.push(Math.log(a[a.length - i] / a[a.length - i - 1])); rb.push(Math.log(b[b.length - i] / b[b.length - i - 1])); }
+    const m = x => x.reduce((p, q) => p + q, 0) / x.length, ma = m(ra), mb = m(rb);
+    let sab = 0, saa = 0, sbb = 0; for (let i = 0; i < n; i++) { sab += (ra[i] - ma) * (rb[i] - mb); saa += (ra[i] - ma) ** 2; sbb += (rb[i] - mb) ** 2; }
+    return saa > 0 && sbb > 0 ? sab / Math.sqrt(saa * sbb) : null;
+  }
+  // rows: posisi OPEN jurnal; views: {KODE: view}; batasPct: batas total risiko terbuka (% modal)
+  function risikoPortofolio(rows, views, cfg, kurs, batasPct) {
+    if (!rows || !rows.length || !kurs) return null;
+    const per = {};
+    rows.forEach(r => { const o = per[r.kode] = per[r.kode] || {k: r.kode, jml: 0, cost: 0, stops: []}; o.jml += r.jumlah; o.cost += r.harga * r.jumlah; if (r.stop > 0) o.stops.push(r.stop); });
+    const capU = cfg.cap / kurs, list = Object.keys(per).map(k => {
+      const o = per[k], v = views[k], hrg = v && v.ok ? v.price : null; if (hrg == null) return null;
+      const entry = o.cost / o.jml, stop = o.stops.length ? Math.max.apply(null, o.stops) : 0, atr = v.I.atr[v.n];
+      const stopPakai = stop > 0 ? stop : (atr != null ? hrg - cfg.atrMult * atr : hrg * 0.9);
+      const risiko = Math.max(0, o.jml * (entry * (1 + cfg.feeB) - stopPakai * (1 - cfg.feeS))); // kerugian bila stop kena dibanding harga beli (0 bila untung sudah terkunci)
+      return {k, jml: o.jml, entry, hrg, nilai: o.jml * hrg, stop, tanpaStop: !(stop > 0), stopPakai, risiko, risikoPct: capU > 0 ? risiko / capU : 0, closes: v.cd.c};
+    }).filter(Boolean);
+    if (!list.length) return null;
+    const nilai = list.reduce((a, x) => a + x.nilai, 0), risiko = list.reduce((a, x) => a + x.risiko, 0);
+    list.forEach(x => { x.bobot = nilai > 0 ? x.nilai / nilai : 0; x.eksPct = capU > 0 ? x.nilai / capU : 0; });
+    const pasangan = []; let wRw = 0;
+    for (let i = 0; i < list.length; i++) for (let j = 0; j < list.length; j++) {
+      const rho = i === j ? 1 : korelasi(list[i].closes, list[j].closes, 60), rr = rho == null ? 0.7 : rho; // data kurang: anggap korelasi sedang
+      wRw += list[i].bobot * list[j].bobot * rr;
+      if (j > i) pasangan.push({a: list[i].k, b: list[j].k, rho});
+    }
+    pasangan.sort((x, y) => (y.rho == null ? -2 : y.rho) - (x.rho == null ? -2 : x.rho));
+    const nEff = wRw > 0 ? 1 / wRw : list.length, risikoPct = capU > 0 ? risiko / capU : 0, batas = (batasPct || 6) / 100;
+    const status = risikoPct > batas ? 'MELEBIHI BATAS' : risikoPct > batas * 0.8 ? 'MENDEKATI BATAS' : 'DALAM BATAS';
+    const pesan = [];
+    if (status !== 'DALAM BATAS') pesan.push('Total risiko terbuka ' + pct(risikoPct).replace('+', '') + ' dari modal, batas ' + pct(batas).replace('+', '') + '. ' + (status === 'MELEBIHI BATAS' ? 'Jangan menambah posisi baru; kurangi posisi atau naikkan stop yang aman.' : 'Sisa ruang tinggal sedikit.'));
+    const tinggi = pasangan.filter(x => x.rho != null && x.rho >= 0.8);
+    if (tinggi.length) pesan.push('Koin yang bergerak hampir sama (korelasi ≥ 0,8): ' + tinggi.slice(0, 4).map(x => x.a + '-' + x.b + ' (' + x.rho.toFixed(2).replace('.', ',') + ')').join(', ') + '. Secara risiko itu dihitung seperti satu taruhan.');
+    if (list.length > 1 && nEff < list.length * 0.6) pesan.push('Jumlah taruhan efektif hanya ' + nEff.toFixed(1).replace('.', ',') + ' dari ' + list.length + ' koin: portofolio kurang terdiversifikasi.');
+    const tanpa = list.filter(x => x.tanpaStop); if (tanpa.length) pesan.push('Tanpa stop tercatat: ' + tanpa.map(x => x.k).join(', ') + ' (risiko dihitung dari stop ATR perkiraan).');
+    const maks = list.slice().sort((a, b) => b.bobot - a.bobot)[0];
+    if (list.length > 1 && maks.bobot > 0.5) pesan.push(maks.k + ' menguasai ' + pct(maks.bobot).replace('+', '') + ' dari nilai portofolio.');
+    return {n: list.length, nilaiUsd: nilai, eksposurPct: capU > 0 ? nilai / capU : 0, risikoUsd: risiko, risikoPct, batas, status, cls: status === 'DALAM BATAS' ? 'good' : status === 'MENDEKATI BATAS' ? 'warn' : 'bad',
+      sisaRisikoUsd: Math.max(0, capU * batas - risiko), nEff, korRata: pasangan.filter(x => x.rho != null).length ? pasangan.filter(x => x.rho != null).reduce((a, x) => a + x.rho, 0) / pasangan.filter(x => x.rho != null).length : null,
+      perKoin: list.map(x => ({k: x.k, nilai: x.nilai, bobot: x.bobot, eksPct: x.eksPct, risiko: x.risiko, risikoPct: x.risikoPct, tanpaStop: x.tanpaStop, stop: x.stopPakai})).sort((a, b) => b.risiko - a.risiko), pasangan, pesan};
+  }
+
+  /* ---------- v2.8: kelola posisi (trailing stop + jual bertahap) ---------- */
+  // rows: lot OPEN satu koin [{harga, jumlah, stop, target, tglBeli}]. Aturan berjenjang, semuanya dari R (risiko awal per koin):
+  //  +1R: stop ke impas (fee tertutup); +1,5R: jual 1/3; +3R: jual 1/3 lagi; stop pelacak = high tertinggi sejak beli - atrMult x ATR (aktif mulai +1,5R).
+  function kelolaPosisi(rows, v, cfg, kurs) {
+    if (!rows || !rows.length || !v || !v.ok || !kurs) return null;
+    let jml = 0, cost = 0, tglMin = '9999';
+    rows.forEach(r => { jml += r.jumlah; cost += r.harga * r.jumlah; if (r.tglBeli && r.tglBeli < tglMin) tglMin = r.tglBeli; });
+    if (!(jml > 0)) return null;
+    const price = v.price, n = v.n, atr = v.I.atr[n], entry = cost / jml, dec = qtyDec(price), idr = x => 'Rp ' + fi(x * kurs);
+    const stops = rows.map(r => r.stop).filter(x => x > 0), stop = stops.length ? Math.max.apply(null, stops) : 0;
+    const stopAwal = rows.map(r => r.stop).filter(x => x > 0).length ? Math.min.apply(null, rows.map(r => r.stop).filter(x => x > 0)) : 0;
+    const R = stopAwal > 0 && entry > stopAwal ? entry - stopAwal : (atr != null ? cfg.atrMult * atr : 0);
+    if (!(R > 0)) return null;
+    const rMult = (price - entry) / R, impas = entry * (1 + cfg.feeB) / (1 - cfg.feeS);
+    let hh = price; const hs = tglMin === '9999' ? 0 : Math.floor(Date.parse(tglMin + 'T12:00:00Z') / DAY);
+    const f = v.full || v.cd; for (let i = 0; i < f.t.length; i++) if (Math.floor(f.t[i] / DAY) >= hs) hh = Math.max(hh, f.h[i]);
+    const chand = atr != null ? hh - cfg.atrMult * atr : 0;
+    const tahap = [], S1 = (kena, judul, t) => tahap.push({kena, judul, t});
+    S1(rMult >= 1, 'Stop ke titik impas (+1R)', 'Untung ' + (isFinite(rMult) ? rMult.toFixed(1).replace('.', ',') : '–') + '× risiko awal; syarat 1,0×. Titik impas ' + idr(impas) + ' (sudah termasuk fee jual dan beli).');
+    S1(rMult >= 1.5, 'Jual 1/3 untuk mengunci untung (+1,5R)', 'Syarat untung 1,5× risiko awal; sekarang ' + rMult.toFixed(1).replace('.', ',') + '×.');
+    S1(rMult >= 3, 'Jual 1/3 lagi (+3R)', 'Syarat untung 3× risiko awal; sisa 1/3 dibiarkan berjalan dengan stop pelacak.');
+    S1(rMult >= 1.5 && chand > 0, 'Stop pelacak aktif', chand > 0 ? 'High tertinggi sejak beli ' + idr(hh) + ' - ' + cfg.atrMult + '× ATR = ' + idr(chand) + (rMult >= 1.5 ? '.' : ' (aktif mulai +1,5R).') : 'Data ATR belum cukup.');
+    let stopBaru = stop, alasan = '';
+    if (rMult >= 1 && impas > stopBaru) { stopBaru = impas; alasan = 'titik impas'; }
+    if (rMult >= 1.5 && chand > stopBaru) { stopBaru = chand; alasan = 'stop pelacak (high tertinggi - ' + cfg.atrMult + '×ATR)'; }
+    if (stopBaru >= price) stopBaru = price * 0.99;
+    const naik = stopBaru > stop * 1.001 && stopBaru < price;
+    // jual bertahap: berapa yang seharusnya sudah terjual menurut tangga, dibanding ukuran awal tidak diketahui -> saran berbasis sisa
+    let jual = null;
+    if (rMult >= 3) jual = {persenSisa: 0.5, alasan: 'Untung ≥ 3R: jual setengah sisa (≈ 1/3 posisi awal), biarkan sisanya berjalan dengan stop pelacak.'};
+    else if (rMult >= 1.5) jual = {persenSisa: 1 / 3, alasan: 'Untung ≥ 1,5R: jual sepertiga untuk mengunci untung.'};
+    if (jual) { jual.jumlah = floorTo(jml * jual.persenSisa, dec); jual.nilaiIdr = jual.jumlah * price * (1 - cfg.feeS) * kurs; jual.ok = jual.jumlah > 0 && jual.nilaiIdr >= cfg.minOrder; }
+    const kunci = naik ? (jml * stopBaru * (1 - cfg.feeS) - jml * entry * (1 + cfg.feeB)) * kurs : null;
+    let ringkas;
+    if (naik) ringkas = 'Naikkan stop ke ' + idr(stopBaru) + ' (' + alasan + ')' + (kunci != null ? (kunci >= 0 ? ', mengunci untung ≈ ' : ', membatasi rugi ≈ ') + 'Rp ' + fi(Math.abs(kunci)) : '') + '.';
+    else if (rMult < 1) ringkas = 'Belum ada tahap yang tercapai (untung ' + rMult.toFixed(1).replace('.', ',') + '× risiko awal). Pertahankan stop ' + (stop > 0 ? idr(stop) : 'yang direncanakan') + '.';
+    else ringkas = 'Stop sudah sama atau lebih tinggi dari saran. Pertahankan.';
+    if (jual && jual.ok) ringkas += ' ' + jual.alasan + ' ≈ ' + kf(jual.jumlah) + ' koin (≈ ' + idr(jual.nilaiIdr / kurs) + ').';
+    return {rMult, R, entry, impas, hh, chand, stop, stopBaru, naik, alasan, kunci, tahap, jual, ringkas, jml};
+  }
+
   /* ---------- rapor jurnal ---------- */
   // baris: {status, hasilPct, hasilIdr, skor, cekLulus, cekTotal}
   function rapor(rows, entryTh) {
@@ -927,7 +1074,7 @@ const ENG = (function () {
     return setupsAt(v.cd, v.I, v.n, rel.rel30);
   }
 
-  return {W, DAY, clamp, fx, fi, pct, qtyDec, expand, split, sma, ema, rsi, atr, analyze, scoreAt, verdict, view, pasar, potensi, kandidat, plan, backtest, rapor, view4, expand4, ajaib, gerak15, ulasNaik, rencanaPosisi, kf, radar, setupsAt, setupAktifCepat, SETUP_NAMA, risikoKoin, relatif, buktiSetup};
+  return {W, DAY, clamp, fx, fi, pct, qtyDec, expand, split, sma, ema, rsi, atr, analyze, scoreAt, verdict, view, pasar, potensi, kandidat, plan, backtest, rapor, view4, expand4, ajaib, gerak15, ulasNaik, rencanaPosisi, kf, radar, setupsAt, setupAktifCepat, SETUP_NAMA, risikoKoin, relatif, buktiSetup, nilaiSinyal, statSinyal, wilson, korelasi, risikoPortofolio, kelolaPosisi};
 })();
 
 
@@ -943,7 +1090,7 @@ const bisa = i => !!(S.user && S.user.izin.indexOf(i) >= 0);
 const CFG_FIELDS = [
   ['modal', 'Modal (Rp)', 100000], ['risiko', 'Risiko per transaksi (%)', 0.1], ['atr', 'Stop = ATR ×', 0.5], ['masuk', 'Skor beli ≥', 5], ['keluar', 'Skor keluar ≤', 5],
   ['feeBeli', 'Fee+pajak beli (%)', 0.01], ['feeJual', 'Fee+pajak jual (%)', 0.01], ['alokasi', 'Maks. alokasi/koin (%)', 5], ['minOrder', 'Order minimal (Rp)', 1000],
-  ['minLiqJuta', 'Transaksi harian min. (juta USD)', 1], ['kursManual', 'Kurs USDT/IDR manual (0=otomatis)', 100], ['batasUntung', 'Notif untung ≥ (%)', 1], ['batasRugi', 'Notif rugi ≥ (%)', 1], ['slip', 'Perkiraan selisih harga tiap sisi (%)', 0.05],
+  ['minLiqJuta', 'Transaksi harian min. (juta USD)', 1], ['kursManual', 'Kurs USDT/IDR manual (0=otomatis)', 100], ['riskTotal', 'Batas total risiko terbuka (% modal)', 0.5], ['batasUntung', 'Notif untung ≥ (%)', 1], ['batasRugi', 'Notif rugi ≥ (%)', 1], ['slip', 'Perkiraan selisih harga tiap sisi (%)', 0.05],
   ['naik1j', 'Alert naik cepat 1 jam ≥ (%), 0=mati', 0.5], ['naik4j', 'Alert naik 4 jam ≥ (%), 0=mati', 0.5], ['turun1j', 'Alert turun cepat 1 jam ≥ (%) untuk posisi Anda, 0=mati', 0.5], ['cooldown', 'Jeda alert per koin (jam)', 1]];
 
 /* ---------- komunikasi dengan server ---------- */
@@ -1080,7 +1227,7 @@ function ringkasKoin(k, rows, v, kd) {
 }
 
 /* ---------- render ---------- */
-function renderAll() { renderPasar(); renderCfg(); renderWatch(); renderDetail(); renderScan(); renderRadar(); renderPos(); renderJurnal(); renderTg(); renderMini(); }
+function renderAll() { renderPasar(); renderCfg(); renderWatch(); renderDetail(); renderScan(); renderRadar(); renderPos(); renderPortofolio(); renderJurnal(); renderTg(); renderMini(); }
 function renderTg() {
   const t = S.data.tg; $('#tgChat').value = t.chatId || '';
   $('#tgInfo').textContent = t.bot ? 'Bot sudah dipasang admin' + (t.botNama ? ' (@' + t.botNama + ')' : '') + '. Buka bot itu di Telegram, tekan Start, lalu cari Chat ID Anda (misalnya lewat bot @userinfobot) dan isi di bawah. Alert posisi dan kandidat beli akan dikirim ke Chat ID ini.' : 'Admin belum memasang bot Telegram. Minta admin mengisi token bot terlebih dahulu.';
@@ -1295,7 +1442,7 @@ function gambarMini(cv, v, pos) {
 /* ---------- pemindai ---------- */
 async function pindai(segar) {
   $('#scanMsg').textContent = 'Memindai... (bisa 10-30 detik)'; kunci(true);
-  try { S.scan = await api('pindai', {segar: !!segar}); $('#scanMsg').textContent = 'Selesai ' + new Date(S.scan.upd).toLocaleTimeString('id-ID') + '.'; renderScan(); }
+  try { S.scan = await api('pindai', {segar: !!segar}); $('#scanMsg').textContent = 'Selesai ' + new Date(S.scan.upd).toLocaleTimeString('id-ID') + '.'; renderScan(); muatRaporSinyal(true); }
   catch (e) { $('#scanMsg').textContent = e.message; }
   kunci(false);
 }
@@ -1377,6 +1524,61 @@ function animMulai() {
 }
 window.addEventListener('resize', () => { if (S.scan) animMulai(); });
 
+
+/* ---------- v2.8: kelola posisi, risiko portofolio, rapor sinyal ---------- */
+function kelolaHtml(kode, rows, v) {
+  const kl = ENG.kelolaPosisi(rows.map(x => ({harga: x.harga, jumlah: x.jumlah, stop: x.stop, target: x.target, tglBeli: x.tglBeli})), v, cfgMesin(), S.kurs);
+  if (!kl) return '';
+  const li = x => `<li class="${x.kena ? 'good' : ''}"><i>${x.kena ? '✓' : '○'}</i><b>${esc(x.judul)}</b><div class="note">${esc(x.t)}</div></li>`;
+  let aksi = '';
+  if (kl.naik) aksi += `<button class="seg" data-ts="${esc(kode)}" data-ts-stop="${kl.stopBaru}" title="Simpan stop baru ke semua lot ${esc(kode)} di jurnal">Terapkan stop Rp ${rp(kl.stopBaru * S.kurs)}</button> `;
+  if (kl.jual && kl.jual.ok) aksi += `<button class="seg" data-jb="${esc(kode)}" data-jb-q="${kl.jual.jumlah}" title="Catat setelah Anda benar-benar menjual di Ajaib">Catat jual sebagian ${ENG.kf(kl.jual.jumlah)} koin</button>`;
+  return `<details open><summary><b>Kelola posisi: stop pelacak &amp; jual bertahap</b> <span class="note">(${kl.rMult.toFixed(1).replace('.', ',')}× risiko awal)</span></summary>
+    <div class="note" style="margin:4px 0">${esc(kl.ringkas)}</div><ul>${kl.tahap.map(li).join('')}</ul>${aksi ? `<div class="row" style="gap:6px;margin:6px 0">${aksi}</div>` : ''}
+    <div class="note">Aturan: +1× risiko awal → stop ke impas; +1,5× → jual 1/3 dan stop pelacak aktif; +3× → jual 1/3 lagi. Tombol hanya mencatat di jurnal; order tetap Anda lakukan sendiri di Ajaib.</div></details>`;
+}
+async function terapkanStop(kode, stop) {
+  if (!confirm('Simpan stop baru ' + kode + ' di Rp ' + rp(stop * S.kurs) + ' ke semua posisi terbuka koin ini?')) return;
+  try { await api('jr_stop', {kode, stop}); await muat(true); } catch (e) { alert(e.message); }
+}
+async function catatJualSebagian(kode, q) {
+  const v = S.views[kode], hg = prompt('Harga jual per koin dalam USDT (sesuai eksekusi di Ajaib dibagi kurs):', v && v.ok ? v.price : ''); if (hg === null) return;
+  const jm = prompt('Jumlah koin yang dijual:', q); if (jm === null) return;
+  const h = Number(String(hg).replace(',', '.')), j = Number(String(jm).replace(',', '.'));
+  if (!(h > 0) || !(j > 0)) { alert('Harga dan jumlah harus berupa angka lebih dari 0.'); return; }
+  try { const r = await api('jr_jual_koin', {kode, jumlah: j, hargaJual: h}); alert('Tercatat. Hasil bagian terjual ' + rpTanda(r.hasilIdr) + '. Sisa posisi ' + ENG.kf(r.sisaPosisi) + ' koin.'); await muat(true); } catch (e) { alert(e.message); }
+}
+function renderPortofolio() {
+  const el = $('#portOut'); if (!el) return;
+  const open = S.jr.filter(r => r.status === 'OPEN');
+  if (!open.length) { el.innerHTML = '<p class="note">Belum ada posisi terbuka.</p>'; return; }
+  const pr = ENG.risikoPortofolio(open.map(r => ({kode: r.kode, harga: r.harga, jumlah: r.jumlah, stop: r.stop})), S.views, cfgMesin(), S.kurs, S.cfg.riskTotal || 6);
+  if (!pr) { el.innerHTML = '<p class="note">Data harga belum tersedia untuk menghitung risiko.</p>'; return; }
+  const k = S.kurs, tile = (a, b, c) => `<div class="kpi"><b>${a}</b><span class="${c || ''}">${b}</span></div>`;
+  el.innerHTML = `<div class="kpis">${tile('Total risiko terbuka', pct(pr.risikoPct).replace('+', '') + ' <span class="note">(Rp ' + fi(pr.risikoUsd * k) + ')</span>', pr.cls)}${tile('Batas / status', pct(pr.batas).replace('+', '') + ' · ' + esc(pr.status), pr.cls)}${tile('Sisa ruang risiko', 'Rp ' + fi(pr.sisaRisikoUsd * k))}${tile('Taruhan efektif', pr.nEff.toFixed(1).replace('.', ',') + ' dari ' + pr.n + ' koin', pr.n > 1 && pr.nEff < pr.n * 0.6 ? 'warn' : '')}</div>
+    <div class="note" style="margin:6px 0">Eksposur: ${pct(pr.eksposurPct).replace('+', '')} dari modal${pr.korRata != null ? ' · korelasi rata-rata ' + pr.korRata.toFixed(2).replace('.', ',') : ''}.</div>
+    ${pr.pesan.length ? '<ul>' + pr.pesan.map(t => `<li class="${pr.status === 'DALAM BATAS' ? '' : 'warn'} note">${esc(t)}</li>`).join('') + '</ul>' : '<p class="good note">Risiko total dalam batas dan tidak ada tumpukan korelasi tinggi.</p>'}
+    <div class="tblwrap"><table><tr><th>Koin</th><th class="num">Nilai (Rp)</th><th class="num">Bobot</th><th class="num">Risiko ke stop (Rp)</th><th class="num">Risiko/modal</th><th>Stop</th></tr>${pr.perKoin.map(x => `<tr><td><b>${esc(x.k)}</b></td><td class="num">${fi(x.nilai * k)}</td><td class="num">${pct(x.bobot).replace('+', '')}</td><td class="num">${fi(x.risiko * k)}</td><td class="num">${pct(x.risikoPct).replace('+', '')}</td><td>${x.tanpaStop ? '<span class="warn">belum dicatat (perkiraan ATR)</span>' : 'Rp ' + rp(x.stop * k)}</td></tr>`).join('')}</table></div>
+    ${pr.n > 1 ? `<details><summary class="note">Korelasi antar koin (60 hari)</summary><div class="tblwrap"><table><tr><th>Pasangan</th><th class="num">Korelasi</th></tr>${pr.pasangan.map(x => `<tr><td>${esc(x.a)} - ${esc(x.b)}</td><td class="num ${x.rho != null && x.rho >= 0.8 ? 'bad' : ''}">${x.rho == null ? '–' : x.rho.toFixed(2).replace('.', ',')}</td></tr>`).join('')}</table></div></details>` : ''}`;
+}
+async function muatRaporSinyal(diam) {
+  const el = $('#rapSinyalOut'); if (!el || !bisa('pindai')) return;
+  if (!diam) $('#rapSinyalMsg').textContent = 'Memuat dan menilai sinyal...';
+  try { S.rapSinyal = await api('rapor_sinyal'); renderRaporSinyal(); $('#rapSinyalMsg').textContent = 'Diperbarui ' + new Date().toLocaleTimeString('id-ID') + '.'; }
+  catch (e) { $('#rapSinyalMsg').textContent = e.message; }
+}
+function renderRaporSinyal() {
+  const el = $('#rapSinyalOut'), r = S.rapSinyal; if (!el || !r) return;
+  const st = r.stat, pc = x => x == null ? '–' : pct(x).replace('+', ''), R = x => x == null ? '–' : (x >= 0 ? '+' : '') + x.toFixed(2).replace('.', ',') + 'R';
+  const tile = (a, b, c) => `<div class="kpi"><b>${a}</b><span class="${c || ''}">${b}</span></div>`;
+  if (!st.total) { el.innerHTML = '<p class="note">Belum ada sinyal tercatat. Sinyal baru dicatat saat robot menemukan kandidat beli (pindai otomatis saat aplikasi dibuka, pengecekan Telegram tiap jam, atau Radar).</p>'; return; }
+  el.innerHTML = `<div class="kpis">${tile('Sinyal selesai / terbuka', st.n + ' / ' + st.terbuka)}${tile('Menang (setelah biaya)', st.n ? pc(st.winPct) + ' <span class="note">(selang 95%: ' + pc(st.ciLo) + ' – ' + pc(st.ciHi) + ')</span>' : '–')}${tile('Rata-rata hasil', R(st.avgR), st.avgR == null ? '' : st.avgR > 0 ? 'good' : 'bad')}${tile('Faktor laba', st.profitFactor == null ? '–' : st.profitFactor === Infinity ? '∞' : st.profitFactor.toFixed(2).replace('.', ','))}</div>
+    <p class="${st.cls} note" style="margin:6px 0"><b>Putusan: ${esc(st.putusan)}</b></p>
+    <p class="note">R = untung atau rugi dibanding risiko awal (jarak ke stop). Rata-rata menang ${R(st.avgMenang)}, rata-rata kalah ${R(st.avgKalah)}. Akhir sinyal: ${st.perHasil.map(h => h.id + ' ' + h.n).join(', ')}.</p>
+    ${st.perSetup.length ? `<details><summary class="note">Hasil per setup</summary><div class="tblwrap"><table><tr><th>Setup</th><th class="num">Sinyal</th><th class="num">Menang</th><th class="num">Rata-rata</th></tr>${st.perSetup.map(x => `<tr><td>${esc(ENG.SETUP_NAMA[x.id] || x.id)}</td><td class="num">${x.n}</td><td class="num">${pc(x.win)}</td><td class="num">${R(x.avgR)}</td></tr>`).join('')}</table></div><p class="note">Per setup biasanya sampelnya sangat kecil; jangan menyimpulkan sebelum puluhan sinyal.</p></details>` : ''}
+    <details open><summary class="note">Sinyal terakhir (maks. 40)</summary><div class="tblwrap"><table><tr><th>Tanggal</th><th>Koin</th><th>Sumber</th><th class="num">Harga (USDT)</th><th>Hasil</th><th class="num">Hari</th><th class="num">R</th><th class="num">Bersih</th></tr>${r.daftar.map(x => `<tr><td>${esc(x.tanggal)}</td><td><b>${esc(x.kode)}</b></td><td>${esc(x.sumber)}</td><td class="num">${fx(x.harga)}</td><td class="${x.status !== 'SELESAI' ? 'note' : x.r > 0 ? 'good' : 'bad'}">${x.status === 'SELESAI' ? esc(x.hasil) : 'berjalan'}</td><td class="num">${x.status === 'SELESAI' ? x.hari : '–'}</td><td class="num">${x.status === 'SELESAI' ? R(x.r) : '–'}</td><td class="num">${x.status === 'SELESAI' ? pc(x.retPct) : '–'}</td></tr>`).join('')}</table></div></details>`;
+}
+
 /* ---------- radar saran ---------- */
 function rdSetupHtml(a) {
   const b = a.bukti, cl = a.nilai === 'mendukung' ? 'good' : a.nilai === 'melemahkan' ? 'bad' : 'warn';
@@ -1444,6 +1646,7 @@ function rencanaHtml(kode) {
     <details open><summary><b>Daftar periksa JUAL</b> <span class="note">(${r.jual.filter(x => x.kena).length} kondisi kena)</span></summary><ul>${jual}</ul></details>
     <details open><summary><b>Daftar periksa TAHAN</b> <span class="note">(${r.tahan.length - jmlNok} dari ${r.tahan.length} terpenuhi)</span></summary><ul>${tahan}</ul></details>
     <details open><summary><b>Daftar periksa TAMBAH</b> <span class="note">(${r.tambah.length - tmbNok} dari ${r.tambah.length} terpenuhi${r.tambah.every(x => x.ok) ? ' · maks. ' + ENG.kf(a.q) + ' koin' : ''})</span></summary><ul>${tambah}</ul></details>
+    ${kelolaHtml(kode, rows, v)}
     <div class="note">Angka dihitung otomatis dari harga sekarang, stop/target di jurnal, dan pengaturan Anda. Ini alat bantu disiplin, bukan perintah. Cek harga di Ajaib sebelum order.</div></div>`;
 }
 function renderPos() {
@@ -1628,7 +1831,7 @@ function izinTerpilih(sel) { return Array.from(document.querySelectorAll(sel)).f
 
 /* ---------- event ---------- */
 document.addEventListener('click', async ev => {
-  const t = ev.target.closest('[data-del],[data-add],[data-tutup],[data-jhapus],[data-range],[data-beli],.mini[data-k],[data-usimpan],[data-ureset],[data-utoggle],[data-uhapus],[data-rdhapus],[data-rdpindah],tr[data-k]'); if (!t) return;
+  const t = ev.target.closest('[data-del],[data-add],[data-tutup],[data-jhapus],[data-range],[data-beli],.mini[data-k],[data-usimpan],[data-ureset],[data-utoggle],[data-uhapus],[data-rdhapus],[data-rdpindah],[data-ts],[data-jb],tr[data-k]'); if (!t) return;
   if (t.dataset.beli) {
     const k = t.dataset.beli, d = $('#jrForm'), v = S.views[k]; d.open = true; $('#jrKode').value = k;
     if (!$('#jrIdr').value && v && v.ok && S.kurs) $('#jrIdr').value = Math.round(v.price * S.kurs);
@@ -1638,6 +1841,8 @@ document.addEventListener('click', async ev => {
   if (t.dataset.ureset) { if (!confirm('Reset sandi pengguna ini? Semua sesi aktifnya akan keluar.')) return; return admAksi('adm_reset', {id: t.dataset.ureset}, j => tampilSandi('Sandi direset', j.username, j.sandiSementara)); }
   if (t.dataset.utoggle) { const on = t.dataset.aktif === '1'; if (!on && !confirm('Nonaktifkan pengguna ini? Ia langsung tidak bisa masuk.')) return; return admAksi('adm_ubah', {id: t.dataset.utoggle, aktif: on}, () => { $('#admHasil').innerHTML = ''; }); }
   if (t.dataset.uhapus) { if (!confirm('Hapus pengguna ini BESERTA watchlist, pengaturan, dan jurnalnya? Tidak bisa dibatalkan.')) return; return admAksi('adm_hapus', {id: t.dataset.uhapus}, () => { $('#admHasil').innerHTML = '<p class="good note">Pengguna dihapus.</p>'; }); }
+  if (t.dataset.ts) return terapkanStop(t.dataset.ts, Number(t.dataset.tsStop));
+  if (t.dataset.jb) return catatJualSebagian(t.dataset.jb, Number(t.dataset.jbQ));
   if (t.dataset.rdhapus) { try { await api('radar_hapus', {k: t.dataset.rdhapus}); await muat(true); } catch (e) { $('#rdMsg').textContent = e.message; } return; }
   if (t.dataset.rdpindah) { try { await api('radar_pindah', {k: t.dataset.rdpindah}); S.sel = t.dataset.rdpindah; await muat(true); $('#rdMsg').textContent = t.dataset.rdpindah + ' dipindah ke watchlist.'; } catch (e) { $('#rdMsg').textContent = e.message; } return; }
   if (t.dataset.del) { if (!confirm('Hapus ' + t.dataset.del + ' dari watchlist?')) return; try { await api('hapus', {k: t.dataset.del}); await muat(); } catch (e) { setMsg(e.message, true); } return; }
@@ -1659,7 +1864,7 @@ document.addEventListener('input', ev => {
   if (['jrNom', 'jrIdr', 'jrQ', 'jrStopIdr', 'jrTpIdr', 'jrKode', 'jrM1', 'jrM2', 'jrM3'].indexOf(id) >= 0) jrRender();
 });
 $('#kode').addEventListener('keydown', e => { if (e.key === 'Enter') tambah(); });
-$('#btnTambah').onclick = tambah; $('#btnRadar').onclick = tambahRadar; $('#rdKode').addEventListener('keydown', e => { if (e.key === 'Enter') tambahRadar(); }); $('#btnMuat').onclick = () => muat(); $('#btnCfg').onclick = simpanCfg; $('#kalOk').onclick = () => kalibrasi(false); $('#autoRef').onchange = () => { try { localStorage.setItem('autoRef', $('#autoRef').checked ? '1' : '0'); } catch (e) {} aturAuto(); };
+$('#btnTambah').onclick = tambah; $('#btnRadar').onclick = tambahRadar; $('#btnRapSinyal').onclick = () => muatRaporSinyal(false); $('#rdKode').addEventListener('keydown', e => { if (e.key === 'Enter') tambahRadar(); }); $('#btnMuat').onclick = () => muat(); $('#btnCfg').onclick = simpanCfg; $('#kalOk').onclick = () => kalibrasi(false); $('#autoRef').onchange = () => { try { localStorage.setItem('autoRef', $('#autoRef').checked ? '1' : '0'); } catch (e) {} aturAuto(); };
 $('#kalAuto').onclick = () => kalibrasi(true); $('#kalPrem').onclick = catatPrem; $('#jrSimpan').onclick = catatBeli; $('#jrIsi').onclick = isiDariRencana;
 $('#btnScan').onclick = () => pindai(false); $('#btnScanBaru').onclick = () => pindai(true);
 $('#btnTgSimpan').onclick = async () => { try { const j = await api('tg_set', {chatId: $('#tgChat').value}); S.data.tg.chatId = j.chatId; $('#tgMsg').textContent = 'Tersimpan.'; } catch (e) { $('#tgMsg').textContent = e.message; } };

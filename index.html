@@ -1068,13 +1068,75 @@ const ENG = (function () {
     return {ok: true, skor, putusan, cls, aktif, rel, risiko: rk, potensi: pt, kand: kd, bukti, alasan,
       ringkas: putusan + ' (skor radar ' + skor + '/100, risiko ' + rk.kelas + (aktif.length ? ', setup: ' + aktif.map(a => a.nama).join(', ') : ', tanpa setup aktif') + ').'};
   }
+
+  /* ---------- v2.8: rekomendasi beli (analisa lengkap sebelum menyatakan layak dibeli) ---------- */
+  // ctx: {vBtc, pr (hasil risikoPortofolio atau null), held [kode posisi terbuka], views {KODE: view}, stat (statSinyal atau null), kode}
+  function rekomendasiBeli(v, p4, cfg, kurs, ps, ctx) {
+    ctx = ctx || {};
+    if (!v || !v.ok) return {ok: false, aksi: 'DATA BELUM CUKUP', cls: 'warn', ringkas: 'Butuh minimal 40 hari data harga untuk dianalisis.', items: []};
+    const pl = plan(v, cfg, kurs), rd = radar(v, ctx.vBtc || null, cfg, ps), kd = kandidat(v, cfg, ps);
+    const n = v.n, I = v.I, s20 = I.sma20[n], s50 = I.sma50[n], atr = I.atr[n], idr = x => 'Rp ' + fi(x * (kurs || 1));
+    const items = [], K = (ok, judul, t, jenis) => items.push({jenis: jenis || 'kritis', ok, judul, t});
+    // ----- syarat wajib -----
+    K(s20 != null && s50 != null && v.price > s50 && s20 > s50, 'Tren harian naik', 'Harga ' + fx(v.price) + ' vs SMA50 ' + (s50 != null ? fx(s50) : '–') + '; SMA20 ' + (s20 != null ? fx(s20) : '–') + (s20 != null && s50 != null && s20 > s50 ? ' di atas' : ' di bawah') + ' SMA50. Robot hanya merekomendasikan beli searah tren naik.');
+    K(v.score >= kd.th, 'Skor teknikal ≥ batas masuk', 'Skor ' + v.score.toFixed(0) + ' vs batas ' + kd.th + (ps && ps.ketat && cfg.ketatPasar ? ' (dinaikkan karena pasar BTC lemah)' : '') + '.');
+    K(v.liq >= cfg.minLiq, 'Likuiditas cukup', 'Nilai transaksi harian ≈ ' + (v.liq / 1e6).toFixed(1).replace('.', ',') + ' juta USD vs minimum ' + (cfg.minLiq / 1e6).toFixed(1).replace('.', ',') + ' juta USD (volume pasar global; di platform lokal bisa lebih tipis).');
+    K(rd.ok && rd.risiko.lv <= 1, 'Risiko koin rendah atau sedang', rd.ok ? 'Kelas risiko ' + rd.risiko.kelas + (rd.risiko.alasan.length ? ': ' + rd.risiko.alasan.join('; ') + '.' : ', tanpa tanda pump atau likuiditas tipis.') : 'Tidak dapat dinilai.');
+    let rr = null;
+    if (pl) { const masuk = pl.e * (1 + cfg.feeB + (cfg.slip || 0)), untung = pl.t1 * (1 - cfg.feeS - (cfg.slip || 0)) - masuk, rugi = masuk - pl.stop * (1 - cfg.feeS - (cfg.slip || 0)); rr = rugi > 0 ? untung / rugi : null; }
+    K(rr != null && rr >= 1.5, 'Rasio untung banding rugi ≥ 1,5', rr != null ? 'Target 1 vs stop, sudah termasuk fee dan selisih harga: ' + rr.toFixed(2).replace('.', ',') + ' : 1.' : 'Rencana belum dapat dihitung (ATR kurang).');
+    K(!!(pl && pl.q > 0 && pl.minOk), 'Ukuran posisi layak', pl ? (pl.q > 0 ? 'Maks. ' + kf(pl.q) + ' koin ≈ ' + idr(pl.cost) + ' (dibatasi ' + pl.bind + ')' + (pl.minOk ? '.' : ', di bawah minimum order ' + idr(cfg.minOrder / (kurs || 1)) + '.') : 'Modal atau batas risiko tidak cukup untuk 1 satuan terkecil.') : 'Rencana belum dapat dihitung.');
+    const pr = ctx.pr; let sisaOk = true, sisaT = 'Belum ada posisi terbuka, ruang risiko penuh.';
+    if (pr) { const risikoBaru = pl ? pl.lossStop / (kurs || 1) : 0; sisaOk = pr.status !== 'MELEBIHI BATAS' && pr.sisaRisikoUsd >= risikoBaru; sisaT = 'Risiko terbuka ' + pct(pr.risikoPct).replace('+', '') + ' dari batas ' + pct(pr.batas).replace('+', '') + '; sisa ruang ' + idr(pr.sisaRisikoUsd) + ' vs risiko posisi baru ≈ ' + idr(risikoBaru) + '.'; }
+    K(sisaOk, 'Ruang risiko portofolio tersedia', sisaT);
+    const stat = ctx.stat, rapNeg = !!(stat && stat.n >= 50 && stat.avgR != null && stat.avgR < 0);
+    K(!rapNeg, 'Rapor sinyal robot tidak negatif', stat && stat.n ? 'Rapor: ' + stat.n + ' sinyal selesai, rata-rata ' + (stat.avgR >= 0 ? '+' : '') + stat.avgR.toFixed(2).replace('.', ',') + 'R. ' + stat.putusan + '.' : 'Rapor belum punya data; belum bisa dipakai sebagai bukti.');
+    // ----- waktu / pemicu -----
+    K(rd.ok && rd.aktif.length > 0, 'Ada pemicu (setup aktif)', rd.ok && rd.aktif.length ? rd.aktif.map(a => a.nama + ' [' + a.nilai + ']').join('; ') + '.' : 'Tidak ada breakout, pullback, squeeze, momentum, atau pantulan hari ini. Tanpa pemicu, entry tidak punya alasan waktu.', 'waktu');
+    const jauh = s20 != null && atr ? (v.price - s20) / atr : 0;
+    K(v.rsi == null || (v.rsi < 70 && jauh <= 2.5), 'Tidak mengejar harga', 'RSI ' + (v.rsi != null ? v.rsi.toFixed(0) : '–') + ' (batas 70); jarak ke SMA20 ' + jauh.toFixed(1).replace('.', ',') + '× ATR (batas 2,5×).', 'waktu');
+    if (p4 && p4.ok) K(p4.sinyal !== 'TUNGGU KOREKSI' && p4.skor > -25, 'Grafik 4 jam mendukung waktu masuk', 'Sinyal 4 jam: ' + p4.sinyal + ' (skor ' + p4.skor.toFixed(0) + ', RSI ' + p4.rsi.toFixed(0) + ').', 'waktu');
+    else K(null, 'Grafik 4 jam mendukung waktu masuk', 'Data 4 jam belum tersedia, tidak dinilai.', 'waktu');
+    // ----- kehati-hatian (mengecilkan ukuran) -----
+    const lemahBukti = rd.ok && rd.aktif.some(a => a.nilai === 'melemahkan');
+    K(!lemahBukti, 'Bukti historis setup tidak melemahkan', rd.ok && rd.aktif.length ? rd.aktif.map(a => a.nama + ': ' + a.nilai + (a.bukti.n ? ' (' + a.bukti.n + ' sinyal, rata-rata ' + pct(a.bukti.avg) + ')' : '')).join('; ') + '.' : 'Tidak ada setup aktif untuk diperiksa.', 'hati');
+    const rel30 = rd.ok ? rd.rel.rel30 : null;
+    K(rel30 == null ? null : rel30 >= 0, 'Tidak kalah dari BTC (30 hari)', rel30 == null ? 'Data BTC belum tersedia.' : 'Selisih terhadap BTC 30 hari: ' + pct(rel30) + '.', 'hati');
+    let korMaks = null, korK = null;
+    (ctx.held || []).forEach(k => { if (k === ctx.kode || !ctx.views || !ctx.views[k] || !ctx.views[k].ok) return; const c = korelasi(v.cd.c, ctx.views[k].cd.c, 60); if (c != null && (korMaks == null || c > korMaks)) { korMaks = c; korK = k; } });
+    K(korMaks == null ? null : korMaks < 0.8, 'Tidak menumpuk dengan posisi yang ada', korMaks == null ? 'Tidak ada posisi lain untuk dibandingkan.' : 'Korelasi tertinggi dengan posisi ' + korK + ': ' + korMaks.toFixed(2).replace('.', ',') + (korMaks >= 0.8 ? ' (hampir satu taruhan yang sama).' : '.'), 'hati');
+    // ----- putusan -----
+    const gagal = i => items.filter(x => x.jenis === i && x.ok === false), kritisGagal = gagal('kritis'), nm = new Set(kritisGagal.map(x => x.judul));
+    const struktur = ['Likuiditas cukup', 'Risiko koin rendah atau sedang', 'Rapor sinyal robot tidak negatif'].some(j => nm.has(j));
+    const faktor = {x: 1, alasan: []};
+    const turun = (f, a) => { faktor.x *= f; faktor.alasan.push(a); };
+    if (ps && ps.lvl === 'LEMAH') turun(0.5, 'pasar BTC lemah');
+    if (!stat || stat.n < 20) turun(0.75, 'rapor sinyal belum cukup bukti');
+    gagal('hati').forEach(x => turun(0.85, x.judul.toLowerCase()));
+    faktor.x = Math.max(0.3, faktor.x);
+    let aksi, cls, ringkas;
+    const q = pl ? floorTo(pl.q * faktor.x, qtyDec(pl.e)) : 0, nilai = pl ? q * pl.e * (kurs || 1) : 0;
+    if (struktur) { aksi = 'HINDARI'; cls = 'bad'; ringkas = 'Jangan beli: ' + kritisGagal.filter(x => ['Likuiditas cukup', 'Risiko koin rendah atau sedang', 'Rapor sinyal robot tidak negatif'].indexOf(x.judul) >= 0).map(x => x.judul.toLowerCase()).join(', ') + ' tidak terpenuhi.'; }
+    else if (kritisGagal.length) { aksi = 'BELUM MEMENUHI SYARAT'; cls = 'warn'; ringkas = kritisGagal.length + ' syarat wajib belum terpenuhi: ' + kritisGagal.map(x => x.judul.toLowerCase()).join('; ') + '. Belum direkomendasikan beli.'; }
+    else if (gagal('waktu').length) { aksi = 'TUNGGU WAKTU MASUK'; cls = 'warn'; ringkas = 'Semua syarat wajib terpenuhi, tetapi waktunya belum tepat: ' + gagal('waktu').map(x => x.judul.toLowerCase()).join('; ') + '. Pantau, jangan mengejar harga.'; }
+    else if (faktor.x < 0.999) { aksi = 'LAYAK BELI, UKURAN DIKECILKAN'; cls = 'good'; ringkas = 'Syarat wajib dan waktu terpenuhi. Ukuran dikecilkan ke ' + Math.round(faktor.x * 100) + '% dari ukuran penuh (' + faktor.alasan.join(', ') + ').'; }
+    else { aksi = 'LAYAK BELI'; cls = 'good'; ringkas = 'Semua syarat wajib dan waktu masuk terpenuhi.'; }
+    if (/^LAYAK/.test(aksi) && pl) {
+      if (q <= 0 || nilai < cfg.minOrder) { aksi = 'BELUM MEMENUHI SYARAT'; cls = 'warn'; ringkas = 'Setelah ukuran dikecilkan, nilai pembelian di bawah minimum order ' + idr(cfg.minOrder / (kurs || 1)) + '. Tunggu kondisi lebih baik atau perbesar modal/risiko.'; }
+      else ringkas += ' Beli maks. ' + kf(q) + ' koin (≈ Rp ' + fi(nilai) + ') dan jangan kejar di atas ' + idr(pl.e + 0.3 * atr) + '; stop ' + idr(pl.stop) + ' (' + pct(pl.stopPct) + '); target 1 ' + idr(pl.t1) + ', target 2 ' + idr(pl.t2) + '. Kerugian bila stop kena ≈ Rp ' + fi(pl.lossStop * faktor.x) + '.';
+    }
+    const ok = items.filter(x => x.ok === true).length, dinilai = items.filter(x => x.ok !== null).length;
+    return {ok: true, aksi, cls, ringkas, items, ok_n: ok, dinilai, faktor: faktor.x, faktorAlasan: faktor.alasan, radar: rd, kand: kd,
+      rencana: pl ? {entry: pl.e, maksHarga: pl.e + 0.3 * atr, stop: pl.stop, t1: pl.t1, t2: pl.t2, q, nilaiIdr: nilai, rugiStopIdr: pl.lossStop * faktor.x, untungT1Idr: pl.gainT1 * faktor.x, rr} : null};
+  }
+
   function setupAktifCepat(v, vBtc) { // untuk tabel pemindai: hanya setup aktif, tanpa bukti
     if (!v || !v.ok) return [];
     const rel = relatif(v, vBtc);
     return setupsAt(v.cd, v.I, v.n, rel.rel30);
   }
 
-  return {W, DAY, clamp, fx, fi, pct, qtyDec, expand, split, sma, ema, rsi, atr, analyze, scoreAt, verdict, view, pasar, potensi, kandidat, plan, backtest, rapor, view4, expand4, ajaib, gerak15, ulasNaik, rencanaPosisi, kf, radar, setupsAt, setupAktifCepat, SETUP_NAMA, risikoKoin, relatif, buktiSetup, nilaiSinyal, statSinyal, wilson, korelasi, risikoPortofolio, kelolaPosisi};
+  return {W, DAY, clamp, fx, fi, pct, qtyDec, expand, split, sma, ema, rsi, atr, analyze, scoreAt, verdict, view, pasar, potensi, kandidat, plan, backtest, rapor, view4, expand4, ajaib, gerak15, ulasNaik, rencanaPosisi, kf, radar, setupsAt, setupAktifCepat, SETUP_NAMA, risikoKoin, relatif, buktiSetup, nilaiSinyal, statSinyal, wilson, korelasi, risikoPortofolio, kelolaPosisi, rekomendasiBeli};
 })();
 
 
@@ -1122,7 +1184,7 @@ function tampilAuth(mode, err) {
   ['#inPass', '#inPass2', '#inLama'].forEach(i => { $(i).value = ''; });
 }
 function keluar(pesan) {
-  S.tok = ''; S.user = null; S.data = null; S.scan = null; S.autoScan = false; S.views = {}; S.sel = null;
+  S.tok = ''; S.user = null; S.data = null; S.scan = null; S.autoScan = false; S.rapSinyal = null; S.views = {}; S.sel = null;
   try { localStorage.removeItem('rk_tok'); } catch (e) {}
   tampilAuth('login', pesan || '');
 }
@@ -1162,7 +1224,7 @@ async function muat(diam) {
     if (!S.sel || !S.views[S.sel]) S.sel = urutan()[0] || null;
     renderAll();
     if (bisa('admin')) muatAdmin();
-    if (!S.autoScan && bisa('pindai')) { S.autoScan = true; pindai(false); } // pemindai otomatis berjalan setiap aplikasi dibuka
+    if (!S.autoScan && bisa('pindai')) { S.autoScan = true; pindai(false); muatRaporSinyal(true); } // pemindai otomatis berjalan setiap aplikasi dibuka
   } catch (e) { if (!diam) { setMsg(e.message, true); if (!$('#authCard').hidden || $('#appView').hidden) { $('#authErr').textContent = 'Berhasil masuk, tetapi data gagal dimuat: ' + e.message; $('#authCard').hidden = false; } } }
   if (!diam) kunci(false);
 }
@@ -1283,6 +1345,22 @@ function renderWatch() {
   S.data.gagal.forEach(k => { h += `<tr><td><b>${esc(k)}</b></td><td colspan="${nCol - 1}" class="bad">Data gagal diambil atau kurang dari 40 hari.</td></tr>`; });
   tbl.innerHTML = h;
 }
+function rekomendasiHtml(k, v, p4) {
+  const cfg = cfgMesin(), open = S.jr.filter(r => r.status === 'OPEN');
+  const pr = open.length ? ENG.risikoPortofolio(open.map(r => ({kode: r.kode, harga: r.harga, jumlah: r.jumlah, stop: r.stop})), S.views, cfg, S.kurs, S.cfg.riskTotal || 6) : null;
+  const held = open.map(r => r.kode).filter((x, i, a) => a.indexOf(x) === i);
+  const rb = ENG.rekomendasiBeli(v, p4, cfg, S.kurs, S.ps, {vBtc: S.views.BTC, pr, held, views: S.views, stat: S.rapSinyal ? S.rapSinyal.stat : null, kode: k});
+  if (!rb.ok) return `<div class="card"><h3>Rekomendasi beli</h3><p class="note">${esc(rb.ringkas)}</p></div>`;
+  const ic = x => x.ok === true ? '<span class="good">✓</span>' : x.ok === false ? '<span class="bad">✗</span>' : '<span class="note">–</span>';
+  const grup = (j, jd) => { const a = rb.items.filter(x => x.jenis === j); return a.length ? `<h4 style="margin:10px 0 4px">${jd}</h4>` + a.map(x => `<div class="comp" style="grid-template-columns:22px 1fr"><b>${ic(x)}</b><span><b>${esc(x.judul)}</b><br><span class="note">${esc(x.t)}</span></span></div>`).join('') : ''; };
+  const rc = rb.rencana;
+  return `<div class="card" id="rekBeli"><div class="row" style="justify-content:space-between;align-items:center"><h3 style="margin:0">Rekomendasi beli</h3><span class="badge ${rb.cls}" style="font-size:14px">${esc(rb.aksi)}</span></div>
+    <p style="margin:8px 0">${esc(rb.ringkas)}</p>
+    <p class="note">${rb.ok_n} dari ${rb.dinilai} pemeriksaan terpenuhi. Syarat wajib harus semua terpenuhi; pemeriksaan waktu menentukan kapan; pemeriksaan kehati-hatian mengecilkan ukuran beli.</p>
+    ${rc && /^LAYAK/.test(rb.aksi) ? `<div class="kpis" style="margin:8px 0"><div class="kpi"><b>Beli maks.</b><span>${ENG.kf(rc.q)} ${esc(k)}</span></div><div class="kpi"><b>Nilai</b><span>Rp ${fi(rc.nilaiIdr)}</span></div><div class="kpi"><b>Jangan kejar di atas</b><span>Rp ${rp(rc.maksHarga * S.kurs)}</span></div><div class="kpi"><b>Stop</b><span class="bad">Rp ${rp(rc.stop * S.kurs)}</span></div><div class="kpi"><b>Target 1 / 2</b><span class="good">Rp ${rp(rc.t1 * S.kurs)} / ${rp(rc.t2 * S.kurs)}</span></div><div class="kpi"><b>Rugi bila stop</b><span class="bad">Rp ${fi(rc.rugiStopIdr)}</span></div></div>` : ''}
+    <details><summary class="note">Lihat semua pemeriksaan</summary>${grup('kritis', 'Syarat wajib')}${grup('waktu', 'Waktu masuk')}${grup('hati', 'Kehati-hatian (mengecilkan ukuran)')}</details>
+    <p class="note">Ini hasil aturan mekanis dari data harga, bukan jaminan. Keputusan akhir dan konfirmasi harga di aplikasi Ajaib tetap di tangan Anda.</p></div>`;
+}
 function renderDetail() {
   const el = $('#detail'), k = S.sel, v = k && S.views[k];
   if (!v || !v.ok) { el.hidden = true; return; }
@@ -1338,6 +1416,7 @@ function renderDetail() {
     ${posHtml}
     <canvas id="cv"></canvas>
   </div>
+  ${rekomendasiHtml(k, v, p4)}
   ${p4Html}
   ${ajHtml}
   <div class="grid2">

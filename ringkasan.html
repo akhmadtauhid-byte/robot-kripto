@@ -50,6 +50,9 @@ button{font:inherit;cursor:pointer}
 .lv b{display:block;font-size:14px;font-variant-numeric:tabular-nums}
 .lv .m{background:var(--naikbg);color:var(--gold2)}.lv .s{background:var(--jualbg);color:var(--jual)}.lv .t{background:var(--belibg);color:var(--beli)}
 .cat{font-size:12px;color:var(--warn);margin-top:4px}
+.dekat{font-size:12.5px;color:var(--ink2);margin-top:6px;line-height:1.5}
+.tg{display:inline-block;font-size:11px;font-weight:700;padding:1px 8px;border-radius:999px;background:rgba(255,255,255,.07);color:var(--muted);margin-right:4px}
+.tg.dkt{background:rgba(212,175,55,.2);color:var(--gold2);border:1px solid var(--gold3)}
 .kosong{color:var(--muted);text-align:center;padding:22px 0;font-size:14px}
 .wa{display:block;text-align:center;text-decoration:none;padding:12px;border-radius:10px;background:#25d366;color:#052e16;font-weight:700;font-size:15px;border:0;width:100%}
 .note{margin:10px 0 0;padding:8px 10px;border-radius:10px;background:rgba(212,175,55,.1);border:1px solid rgba(212,175,55,.25);color:var(--gold2);font-size:12.5px;line-height:1.45}
@@ -264,7 +267,7 @@ function kelompok(r) {
   const urut = (a, b) => (a.urut - b.urut) || (b.skor - a.skor);
   return {
     beli: r.baris.filter(b => /^LAYAK/.test(b.aksi)).sort(urut),
-    tunggu: r.baris.filter(b => /^(TUNGGU|BELUM)/.test(b.aksi)).sort(urut),
+    tunggu: r.baris.filter(b => /^(TUNGGU|BELUM)/.test(b.aksi)).sort((a, b) => (a.kurang.length - b.kurang.length) || urut(a, b)),
     hindar: r.baris.filter(b => b.aksi === 'HINDARI').sort(urut)
   };
 }
@@ -273,7 +276,7 @@ function kartu(b) {
   const lv = r ? `<div class="lv"><div class="m">Jangan kejar di atas<b>${rp(r.maks)}</b></div><div class="s">Stop (${pct(r.stopPct)})<b>${rp(r.stop)}</b></div><div class="t">Target 1 / 2<b>${fx(r.t1)} / ${fx(r.t2)}</b></div></div>`
     + (b.kecil ? '<div class="cat">Disarankan memperkecil ukuran posisi (pasar lemah atau bukti sinyal belum kuat).</div>' : '')
     + `<button class="btnhit" data-hit="${esc(b.k)}">Hitung jumlah koin</button>`
-    : `<div class="cat">${b.aksi === 'HINDARI' ? 'Jangan beli.' : ''} ${b.kurang.length ? 'Belum terpenuhi: ' + b.kurang.map(x => esc(x.toLowerCase())).join('; ') + '.' : ''}</div>`;
+    : `${b.aksi === 'HINDARI' ? '<div class="cat">Jangan beli.</div>' : ''}${b.kurang.length ? `<div class="dekat"><span class="tg${b.kurang.length <= 2 ? ' dkt' : ''}">Tinggal ${b.kurang.length} syarat</span> ${b.kurang.map(x => esc(x.toLowerCase())).join('; ')}.</div>` : ''}`;
   return `<div class="item"><div class="row1"><div><span class="kode">${esc(b.k)}</span>${chip}<span class="badge ${esc(b.acls)}">${esc(b.aksi)}</span></div>
     <div class="harga">${rp(b.harga)}<div style="margin-top:3px"><span class="pill ${b.chg24 >= 0 ? 'up' : 'dn'}">24j ${pct(b.chg24)}</span><span class="pill ${b.chg7 >= 0 ? 'up' : 'dn'}">7h ${pct(b.chg7)}</span></div></div></div>
     <div class="meta">${esc(b.vd)} · skor ${b.skor} · potensi ${esc(b.potensi)} · risiko ${esc(b.risiko)}${b.setup.length ? ' · pemicu: ' + b.setup.map(esc).join(', ') : ''}</div>
@@ -286,7 +289,7 @@ function render() {
   const p = $('#pasar'); if (r.pasar) { p.hidden = false; p.className = 'mkt ' + esc(r.pasar.cls); p.textContent = 'Pasar BTC: ' + r.pasar.lvl + '. ' + r.pasar.why; } else p.hidden = true;
   const g = kelompok(r); $('#nBeli').textContent = g.beli.length; $('#nTunggu').textContent = g.tunggu.length; $('#nHindar').textContent = g.hindar.length;
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.dataset.t === tab));
-  const info = {beli: 'Lolos semua syarat beli robot. Area masuk, stop, dan target ditampilkan. Tetap cek harga di Ajaib.', tunggu: 'Belum semua syarat terpenuhi atau belum waktunya masuk. Cukup dipantau.', hindar: 'Tren atau risikonya buruk. Jangan beli.'};
+  const info = {beli: 'Lolos semua syarat beli robot. Area masuk, stop, dan target ditampilkan. Tetap cek harga di Ajaib.', tunggu: 'Belum semua syarat terpenuhi. Diurutkan dari yang paling dekat lolos; label "Tinggal N syarat" menunjukkan apa yang masih kurang. Cukup dipantau.', hindar: 'Tren atau risikonya buruk. Jangan beli.'};
   $('#tabInfo').textContent = info[tab];
   const a = g[tab];
   $('#daftar').innerHTML = a.length ? a.map(kartu).join('') : `<div class="kosong">${tab === 'beli' ? 'Saat ini tidak ada koin yang memenuhi semua syarat beli. Menunggu juga keputusan yang sah.' : 'Kosong.'}</div>`;

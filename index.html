@@ -92,6 +92,10 @@ canvas.sk{width:110px;height:34px;border:0;background:transparent;display:inline
 tr.nonaktif td{opacity:.55}
 .izinbox{display:flex;flex-wrap:wrap;gap:8px 14px;margin:6px 0}
 .sandibox{font:600 16px ui-monospace,Consolas,monospace;background:var(--bg);border:1px dashed var(--s1);border-radius:6px;padding:8px 10px;display:inline-block;user-select:all}
+body.ro #appView > *:not(#userBar):not(#ringkasCard) { display: none !important; }
+.rkgrid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); margin-top: 8px; }
+.rkc { border: 1px solid var(--line, #8884); border-radius: 10px; padding: 10px; }
+.rkc h4 { margin: 0 0 4px; display: flex; justify-content: space-between; align-items: center; gap: 6px; }
 </style>
 </head>
 <body>
@@ -252,6 +256,12 @@ tr.nonaktif td{opacity:.55}
     </div>
   </div>
 
+  <div class="card" data-izin="ringkasan,admin" id="ringkasCard">
+    <div class="row" style="justify-content:space-between;align-items:center"><h3 style="margin:0">Ringkasan simpulan koin</h3><button class="seg" id="btnRingkas">Muat ulang</button></div>
+    <p class="note" id="rkMsg" role="status"></p>
+    <div id="rkOut"></div>
+  </div>
+
   <div class="card" data-izin="admin">
     <h3>Admin: kelola pengguna</h3>
     <div class="tblwrap"><table id="admTbl"></table></div>
@@ -262,10 +272,21 @@ tr.nonaktif td{opacity:.55}
         <label>Nama <input type="text" id="admNama" maxlength="40"></label>
         <label>Username <input type="text" id="admUser" maxlength="20" autocapitalize="none"></label>
         <label>Peran awal <select id="admPeran"></select></label>
+        <label>Masa aktif (hari, 0 = tanpa batas) <input type="number" id="admHari" min="0" max="366" value="0" style="width:90px"></label>
       </div>
       <div class="izinbox" id="admIzin"></div>
       <div class="row" style="align-items:center"><button class="primary" id="admBuat">Buat pengguna</button><span class="note" id="admMsg" role="status"></span></div>
       <p class="note">Sistem membuatkan sandi sementara. Berikan sandi itu ke pengguna lewat jalur pribadi; ia wajib menggantinya saat pertama masuk.</p>
+    </details>
+    <details style="margin-top:10px" id="admPaket">
+      <summary><b>Harga &amp; info pembayaran Paket Ringkasan</b></summary>
+      <div class="row" style="margin-top:8px">
+        <label>3 hari (Rp) <input type="number" id="hg3" min="0" style="width:110px"></label>
+        <label>7 hari (Rp) <input type="number" id="hg7" min="0" style="width:110px"></label>
+        <label>30 hari (Rp) <input type="number" id="hg30" min="0" style="width:110px"></label>
+      </div>
+      <label style="display:block;margin-top:6px">Info pembayaran (tampil ke pengguna paket)<textarea id="hgInfo" rows="3" maxlength="600" style="width:100%"></textarea></label>
+      <div class="row" style="align-items:center"><button id="hgSimpan">Simpan harga</button><span class="note" id="hgMsg" role="status"></span></div>
     </details>
     <details style="margin-top:10px">
       <summary><b>Bot Telegram (dipakai bersama semua pengguna)</b></summary>
@@ -1145,7 +1166,7 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const {fx, fi, pct} = ENG;
 const S = {data: null, views: {}, ps: null, sel: null, range: 120, sma200: false, cfg: {}, jr: [], kurs: 0, kursRef: 0, prem: {}, scan: null, tok: '', user: null, mode: 'login', adm: null};
-const IZIN_NAMA = {watchlist: 'Kelola watchlist', pindai: 'Pemindai', jurnal: 'Jurnal & posisi', pengaturan: 'Pengaturan', notif: 'Notifikasi Telegram', admin: 'Admin'};
+const IZIN_NAMA = {watchlist: 'Kelola watchlist', pindai: 'Pemindai', jurnal: 'Jurnal & posisi', pengaturan: 'Pengaturan', notif: 'Notifikasi Telegram', admin: 'Admin', ringkasan: 'Ringkasan simpulan'};
 const rp = x => x == null || isNaN(x) ? '–' : (Math.abs(x) >= 1000 ? fi(x) : fx(x));
 const rpTanda = x => (x >= 0 ? '+' : '-') + 'Rp ' + rp(Math.abs(x));
 const bisa = i => !!(S.user && S.user.izin.indexOf(i) >= 0);
@@ -1184,7 +1205,7 @@ function tampilAuth(mode, err) {
   ['#inPass', '#inPass2', '#inLama'].forEach(i => { $(i).value = ''; });
 }
 function keluar(pesan) {
-  S.tok = ''; S.user = null; S.data = null; S.scan = null; S.autoScan = false; S.rapSinyal = null; S.views = {}; S.sel = null;
+  S.tok = ''; S.user = null; S.data = null; S.scan = null; S.autoScan = false; S.rapSinyal = null; document.body.classList.remove('ro'); S.views = {}; S.sel = null;
   try { localStorage.removeItem('rk_tok'); } catch (e) {}
   tampilAuth('login', pesan || '');
 }
@@ -1216,6 +1237,11 @@ async function muat(diam) {
   if (!diam) { kunci(true); setMsg('Mengambil data...', false); }
   try {
     const j = await api('data');
+    if (j.ringkasOnly) {
+      S.user = j.user; document.body.classList.add('ro'); $('#authCard').hidden = true; $('#appView').hidden = false; terapkanIzin();
+      if (!diam) setMsg('', true);
+      await muatRingkas(); if (!diam) kunci(false); return;
+    }
     S.data = j; S.cfg = j.cfg; S.jr = j.jurnal || []; S.kurs = j.kurs || 0; S.kursRef = j.kursRef || 0; S.prem = j.prem || {}; S.user = j.user;
     $('#authCard').hidden = true; $('#appView').hidden = false;
     terapkanIzin();
@@ -1224,6 +1250,7 @@ async function muat(diam) {
     if (!S.sel || !S.views[S.sel]) S.sel = urutan()[0] || null;
     renderAll();
     if (bisa('admin')) muatAdmin();
+    if (bisa('ringkasan') || bisa('admin')) muatRingkas(true);
     if (!S.autoScan && bisa('pindai')) { S.autoScan = true; pindai(false); muatRaporSinyal(true); } // pemindai otomatis berjalan setiap aplikasi dibuka
   } catch (e) { if (!diam) { setMsg(e.message, true); if (!$('#authCard').hidden || $('#appView').hidden) { $('#authErr').textContent = 'Berhasil masuk, tetapi data gagal dimuat: ' + e.message; $('#authCard').hidden = false; } } }
   if (!diam) kunci(false);
@@ -1873,6 +1900,37 @@ async function catatPrem() {
 }
 
 /* ---------- admin ---------- */
+/* ---------- v3.0: paket ringkasan ---------- */
+async function muatRingkas(diam) {
+  const el = $('#rkOut'); if (!el) return;
+  if (!diam) $('#rkMsg').textContent = 'Memuat ringkasan...';
+  try { S.rk = await api('ringkasan'); renderRingkas(); $('#rkMsg').textContent = ''; }
+  catch (e) { $('#rkMsg').textContent = e.message; }
+}
+function rkKartu(b) {
+  const r = b.rencana, ket = b.aksi === 'HINDARI' ? 'Jangan beli.' : '';
+  return `<div class="rkc"><h4><span>${esc(b.k)}</span><span class="badge ${b.acls}">${esc(b.aksi)}</span></h4>
+    <div>Rp ${rp(b.harga)} <span class="note ${b.chg24 >= 0 ? 'good' : 'bad'}">24j ${pct(b.chg24)}</span> <span class="note ${b.chg7 >= 0 ? 'good' : 'bad'}">7h ${pct(b.chg7)}</span></div>
+    <div class="note">${esc(b.vd)} · skor ${b.skor} · potensi ${esc(b.potensi)} · risiko ${esc(b.risiko)}</div>
+    ${b.setup.length ? `<div class="note">Pemicu: ${b.setup.map(esc).join(', ')}</div>` : ''}
+    ${r ? `<table class="kv" style="margin-top:6px"><tr><td>Jangan kejar di atas</td><td class="num">Rp ${rp(r.maks)}</td></tr><tr><td>Stop</td><td class="num bad">Rp ${rp(r.stop)} · ${pct(r.stopPct)}</td></tr><tr><td>Target 1 / 2</td><td class="num good">Rp ${rp(r.t1)} / ${rp(r.t2)}</td></tr></table>${b.kecil ? '<div class="note warn">Gunakan porsi lebih kecil dari biasa (ada faktor kehati-hatian: pasar lemah, rapor sinyal belum cukup bukti, atau bukti setup melemah).</div>' : ''}` :
+      `<div class="note">${ket} ${b.kurang.length ? 'Belum terpenuhi: ' + b.kurang.map(x => esc(x.toLowerCase())).join('; ') + '.' : ''}</div>`}
+    <div class="note">${b.lulus} dari ${b.total} pemeriksaan terpenuhi.</div></div>`;
+}
+function renderRingkas() {
+  const el = $('#rkOut'), r = S.rk; if (!el || !r) return;
+  const per = (x) => `<p class="note" style="margin:4px 0">${esc(x)}</p>`;
+  const grup = (a, judul, tutup) => a.length ? `<h4 style="margin:12px 0 2px">${judul} (${a.length})</h4>` + (tutup ? `<details><summary class="note">Tampilkan</summary><div class="rkgrid">${a.map(rkKartu).join('')}</div></details>` : `<div class="rkgrid">${a.map(rkKartu).join('')}</div>`) : '';
+  const layak = r.baris.filter(b => /^LAYAK/.test(b.aksi)), tunggu = r.baris.filter(b => /^(TUNGGU|BELUM)/.test(b.aksi)), hindar = r.baris.filter(b => b.aksi === 'HINDARI');
+  const upd = r.upd ? new Date(r.upd).toLocaleString('id-ID') : '';
+  el.innerHTML = `${r.pasar ? `<p style="margin:0"><span class="badge ${r.pasar.cls}">Pasar BTC: ${esc(r.pasar.lvl)}</span> <span class="note">${esc(r.pasar.why)}</span></p>` : ''}
+    ${r.berlaku ? per('Masa aktif paket sampai ' + r.berlaku + (r.sisaHari != null ? ' (sisa ' + r.sisaHari + ' hari)' : '') + '.') : ''}
+    ${r.rapor ? per('Rapor sinyal robot: ' + r.rapor.n + ' sinyal selesai. ' + r.rapor.putusan + '.') : per('Rapor sinyal robot belum punya data yang cukup; perlakukan hasil ini sebagai hitungan mekanis, bukan bukti.')}
+    ${grup(layak, 'Layak dipertimbangkan beli')}${!layak.length ? '<p class="note" style="margin:10px 0">Saat ini tidak ada koin yang memenuhi semua syarat beli. Menunggu juga keputusan yang sah.</p>' : ''}
+    ${grup(tunggu, 'Pantau, belum waktunya', true)}${grup(hindar, 'Hindari', true)}
+    <p class="note" style="margin-top:12px">Data harga dari bursa global (harga Rp = kurs USDT/IDR), diperbarui ${esc(upd)}; di Ajaib bisa berbeda tipis. ${r.gagal.length ? 'Data gagal diambil: ' + esc(r.gagal.join(', ')) + '. ' : ''}Alat edukasi, bukan saran investasi; kripto sangat fluktuatif.</p>
+    <details><summary class="note"><b>Paket &amp; perpanjangan</b></summary><p class="note">3 hari Rp ${fi(r.harga.h3)} · 7 hari Rp ${fi(r.harga.h7)} · 30 hari Rp ${fi(r.harga.h30)}</p>${r.infoBayar ? `<p class="note" style="white-space:pre-line">${esc(r.infoBayar)}</p>` : ''}</details>`;
+}
 async function muatAdmin() {
   try { S.adm = await api('adm_daftar'); renderAdmin(); } catch (e) { $('#admHasil').innerHTML = `<p class="bad note">${esc(e.message)}</p>`; }
 }
@@ -1886,18 +1944,20 @@ function renderAdmin() {
     $('#admPeran').innerHTML = Object.keys(a.peran).map(p => `<option value="${p}">${p}</option>`).join('') + '<option value="kustom">kustom</option>';
     $('#admPeran').value = 'trader'; $('#admIzin').innerHTML = izinBoxes('nizin', a.peran.trader);
   }
-  let h = '<tr><th>Pengguna</th><th>Izin akses</th><th>Status</th><th>Login terakhir</th><th>Aksi</th></tr>';
+  let h = '<tr><th>Pengguna</th><th>Izin akses</th><th>Status</th><th>Masa aktif</th><th>Login terakhir</th><th>Aksi</th></tr>';
   a.pengguna.forEach(u => {
     const diri = S.user && u.id === S.user.id;
     h += `<tr class="${u.aktif ? '' : 'nonaktif'}"><td><b>${esc(u.nama)}</b><div class="note">${esc(u.username)} · ${esc(u.peran)}${u.punyaChat ? ' · Telegram' : ''}</div></td>
       <td style="white-space:normal;min-width:260px"><div class="izinbox" data-urow="${esc(u.id)}">${izinBoxes('uizin', u.izin)}</div></td>
       <td>${u.aktif ? '<span class="badge good">Aktif</span>' : '<span class="badge bad">Nonaktif</span>'}${u.wajibGanti ? '<div class="note">belum ganti sandi</div>' : ''}</td>
+      <td class="note">${u.berlaku ? (u.habis ? '<span class="bad">Habis ' : '<span>') + esc(u.berlaku) + '</span>' : 'tanpa batas'}<div><button class="seg" data-upaket="${esc(u.id)}">Atur</button></div></td>
       <td class="note">${esc(u.loginTerakhir || '–')}</td>
       <td style="white-space:normal"><button class="seg" data-usimpan="${esc(u.id)}">Simpan izin</button>
         <button class="seg" data-ureset="${esc(u.id)}">Reset sandi</button>
         ${diri ? '' : `<button class="seg" data-utoggle="${esc(u.id)}" data-aktif="${u.aktif ? 0 : 1}">${u.aktif ? 'Nonaktifkan' : 'Aktifkan'}</button> <button class="seg danger" data-uhapus="${esc(u.id)}">Hapus</button>`}</td></tr>`;
   });
   $('#admTbl').innerHTML = h;
+  if (a.paket && !document.activeElement.closest('#admPaket')) { $('#hg3').value = a.paket.harga.h3; $('#hg7').value = a.paket.harga.h7; $('#hg30').value = a.paket.harga.h30; $('#hgInfo').value = a.paket.info; }
 }
 function tampilSandi(judul, username, sandi) {
   $('#admHasil').innerHTML = `<div class="pos"><b>${esc(judul)}</b><p class="note" style="margin:6px 0">Username: <b>${esc(username)}</b>. Sandi sementara (hanya tampil sekarang, salin dan berikan lewat jalur pribadi):</p><span class="sandibox">${esc(sandi)}</span></div>`;
@@ -1910,13 +1970,14 @@ function izinTerpilih(sel) { return Array.from(document.querySelectorAll(sel)).f
 
 /* ---------- event ---------- */
 document.addEventListener('click', async ev => {
-  const t = ev.target.closest('[data-del],[data-add],[data-tutup],[data-jhapus],[data-range],[data-beli],.mini[data-k],[data-usimpan],[data-ureset],[data-utoggle],[data-uhapus],[data-rdhapus],[data-rdpindah],[data-ts],[data-jb],tr[data-k]'); if (!t) return;
+  const t = ev.target.closest('[data-del],[data-add],[data-tutup],[data-jhapus],[data-range],[data-beli],.mini[data-k],[data-usimpan],[data-upaket],[data-ureset],[data-utoggle],[data-uhapus],[data-rdhapus],[data-rdpindah],[data-ts],[data-jb],tr[data-k]'); if (!t) return;
   if (t.dataset.beli) {
     const k = t.dataset.beli, d = $('#jrForm'), v = S.views[k]; d.open = true; $('#jrKode').value = k;
     if (!$('#jrIdr').value && v && v.ok && S.kurs) $('#jrIdr').value = Math.round(v.price * S.kurs);
     jrRender(); d.scrollIntoView({behavior: 'smooth', block: 'center'}); $('#jrNom').focus(); return;
   }
   if (t.dataset.usimpan) { const id = t.dataset.usimpan, izin = Array.from(document.querySelectorAll(`[data-urow="${id}"] input`)).filter(i => i.checked).map(i => i.dataset.uizin); return admAksi('adm_ubah', {id, izin}, () => { $('#admHasil').innerHTML = '<p class="good note">Izin tersimpan. Berlaku pada permintaan berikutnya pengguna itu.</p>'; }); }
+  if (t.dataset.upaket) { const h = prompt('Tambah masa aktif berapa hari? (3, 7, 30; 0 = hapus batas waktu)', '7'); if (h == null) return; return admAksi('adm_paket', {id: t.dataset.upaket, hari: Number(h)}, j => { $('#admHasil').innerHTML = '<p class="good note">Masa aktif: ' + esc(j.berlaku || 'tanpa batas') + '.</p>'; }); }
   if (t.dataset.ureset) { if (!confirm('Reset sandi pengguna ini? Semua sesi aktifnya akan keluar.')) return; return admAksi('adm_reset', {id: t.dataset.ureset}, j => tampilSandi('Sandi direset', j.username, j.sandiSementara)); }
   if (t.dataset.utoggle) { const on = t.dataset.aktif === '1'; if (!on && !confirm('Nonaktifkan pengguna ini? Ia langsung tidak bisa masuk.')) return; return admAksi('adm_ubah', {id: t.dataset.utoggle, aktif: on}, () => { $('#admHasil').innerHTML = ''; }); }
   if (t.dataset.uhapus) { if (!confirm('Hapus pengguna ini BESERTA watchlist, pengaturan, dan jurnalnya? Tidak bisa dibatalkan.')) return; return admAksi('adm_hapus', {id: t.dataset.uhapus}, () => { $('#admHasil').innerHTML = '<p class="good note">Pengguna dihapus.</p>'; }); }
@@ -1954,8 +2015,10 @@ $('#btnKeluar').onclick = () => keluar('');
 $('#btnSandi').onclick = () => tampilAuth('ganti', '');
 $('#admBuat').onclick = () => {
   const izin = izinTerpilih('#admIzin input');
-  admAksi('adm_buat', {nama: $('#admNama').value, username: $('#admUser').value, izin}, j => { tampilSandi('Pengguna dibuat', j.username, j.sandiSementara); $('#admNama').value = $('#admUser').value = ''; $('#admMsg').textContent = ''; });
+  admAksi('adm_buat', {nama: $('#admNama').value, username: $('#admUser').value, izin, hari: Number($('#admHari').value) || 0}, j => { tampilSandi('Pengguna dibuat' + (j.berlaku ? ' (aktif sampai ' + j.berlaku + ')' : ''), j.username, j.sandiSementara); $('#admNama').value = $('#admUser').value = ''; $('#admMsg').textContent = ''; });
 };
+$('#hgSimpan').onclick = async () => { try { const j = await api('adm_harga', {h3: $('#hg3').value, h7: $('#hg7').value, h30: $('#hg30').value, info: $('#hgInfo').value}); S.adm.paket = j.paket; $('#hgMsg').textContent = 'Harga tersimpan.'; } catch (e) { $('#hgMsg').textContent = e.message; } };
+$('#btnRingkas').onclick = () => muatRingkas();
 $('#admBotSimpan').onclick = () => admAksi('adm_bot', {token: $('#admBotTok').value}, () => { $('#admBotTok').value = ''; $('#admBotMsg').textContent = 'Bot tersimpan.'; muat(); });
 $('#admBotHapus').onclick = () => { if (confirm('Lepas bot Telegram? Semua alert berhenti.')) admAksi('adm_bot', {token: ''}, () => { $('#admBotMsg').textContent = 'Bot dilepas.'; muat(); }); };
 $('#btnTema').onclick = () => { const r = document.documentElement, t = r.dataset.theme === 'dark' ? 'light' : 'dark'; r.dataset.theme = t; try { localStorage.setItem('rk_tema', t); } catch (e) {} renderDetail(); if (S.data) renderMini(); };

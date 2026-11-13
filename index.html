@@ -189,7 +189,7 @@ body.ro #appView > *:not(#userBar):not(#ringkasCard) { display: none !important;
   </div>
 
   <div class="card" data-izin="pindai">
-    <h3>Pemindai potensi naik (28 koin besar)</h3>
+    <h3>Pemindai potensi naik (28 koin besar + koin naik yang terdeteksi)</h3>
     <p class="note" style="margin-top:0">Memeriksa volume yang melonjak saat harga naik, dekat/menembus high 20 hari, dan tren pendukung. Penyaring awal, bukan jaminan harga naik. Pastikan koinnya tersedia di Ajaib sebelum membeli.</p>
     <div class="row" style="align-items:center">
       <button class="primary" id="btnScan">Pindai sekarang</button>
@@ -282,6 +282,12 @@ body.ro #appView > *:not(#userBar):not(#ringkasCard) { display: none !important;
       <div class="izinbox" id="admIzin"></div>
       <div class="row" style="align-items:center"><button class="primary" id="admBuat">Buat pengguna</button><span class="note" id="admMsg" role="status"></span></div>
       <p class="note">Sistem membuatkan sandi sementara. Berikan sandi itu ke pengguna lewat jalur pribadi; ia wajib menggantinya saat pertama masuk.</p>
+    </details>
+    <details style="margin-top:10px" id="admAjaib">
+      <summary><b>Daftar koin Ajaib untuk penemu koin naik</b> <span class="note" id="ajInfo"></span></summary>
+      <p class="note" style="margin-top:8px">Koin di daftar ini diprioritaskan saat robot mencari koin yang sedang naik (ambang naik lebih rendah, ditandai "Ajaib"). Daftar bawaan hanyalah cuplikan Top Gainers Ajaib, bukan seluruh aset. Untuk memperbarui, tempel teks dari layar Ajaib (Market, lalu Top Volume atau Top Gainers); robot menyaring kodenya. Mengosongkan kotak lalu menyimpan akan mengembalikan daftar bawaan.</p>
+      <textarea id="ajDaftar" rows="5" style="width:100%" placeholder="BARD MY ARIA DODO ..."></textarea>
+      <div class="row" style="align-items:center"><button id="ajSimpan">Simpan daftar</button><span class="note" id="ajMsg" role="status"></span></div>
     </details>
     <details style="margin-top:10px" id="admPaket">
       <summary><b>Harga &amp; info pembayaran Paket Ringkasan</b></summary>
@@ -1564,7 +1570,7 @@ function renderScan() {
   <table><tr><th>Koin</th><th class="num">Harga (USDT)</th><th class="num">24j</th><th class="num">7h</th><th>Skor</th><th>Potensi</th><th class="num">Vol ×</th><th>Kandidat?</th><th>Gerak 30h</th><th>Setup</th><th>Risiko</th><th class="num" title="Nilai transaksi 24 jam di Indodax (pembanding likuiditas lokal; bukan volume Ajaib)">Vol Indodax</th><th>Alasan potensi</th><th></th></tr>`;
   rows.forEach(r => {
     const ada = S.views[r.k] && S.views[r.k].wl;
-    h += `<tr><td><b>${esc(r.k)}</b>${r.src && r.src !== 'Binance' ? ' <span class="chip" title="Data harga dari ' + esc(r.src) + ' (tidak ada di Binance)">' + esc(r.src) + '</span>' : ''}${r.baru ? ' <span class="chip" title="Di luar daftar tetap; terdeteksi sedang naik di bursa global. Cek dulu apakah tersedia di Ajaib.">terdeteksi naik</span>' : ''}</td><td class="num">${fx(r.price)}</td><td class="num ${r.chg24 >= 0 ? 'good' : 'bad'}">${pct(r.chg24)}</td><td class="num ${r.chg7 >= 0 ? 'good' : 'bad'}">${pct(r.chg7)}</td>
+    h += `<tr><td><b>${esc(r.k)}</b>${r.src && r.src !== 'Binance' ? ' <span class="chip" title="Data harga dari ' + esc(r.src) + ' (tidak ada di Binance)">' + esc(r.src) + '</span>' : ''}${r.baru ? (r.aj ? ' <span class="chip" title="Di luar daftar tetap; sedang naik dan ada di daftar Ajaib robot.">naik · Ajaib</span>' : ' <span class="chip" title="Di luar daftar tetap; terdeteksi sedang naik di bursa global. Belum ada di daftar Ajaib robot, cek dulu apakah tersedia di Ajaib.">naik · cek Ajaib</span>') : ''}</td><td class="num">${fx(r.price)}</td><td class="num ${r.chg24 >= 0 ? 'good' : 'bad'}">${pct(r.chg24)}</td><td class="num ${r.chg7 >= 0 ? 'good' : 'bad'}">${pct(r.chg7)}</td>
       <td>${r.score.toFixed(0)} <span class="note">${esc(r.vd)}</span></td><td class="${r.pts >= 65 ? 'good' : r.pts >= 45 ? 'warn' : ''}"><b>${r.pts}</b> ${esc(r.lbl)}</td>
       <td class="num">${r.vr == null ? '–' : r.vr.toFixed(1).replace('.', ',')}</td><td title="${esc((r.alasan || []).join('; '))}" class="${r.kand ? 'good' : 'warn'}">${r.kand ? 'Ya' : 'Belum'}</td>
       <td><canvas class="sk" data-sp="${esc(r.k)}"></canvas></td>
@@ -1734,7 +1740,7 @@ async function tambahRadarBanyak() {
     const b = [];
     if (j.ditambah.length) b.push(j.ditambah.length + ' ditambahkan (' + j.ditambah.join(', ') + ')');
     if (j.sudah.length) b.push('sudah ada: ' + j.sudah.join(', '));
-    if (j.gagal.length) b.push('data tidak ditemukan atau kurang dari 40 hari: ' + j.gagal.join(', '));
+    if (j.gagal.length) b.push('data tidak ditemukan atau kurang dari 40 hari: ' + j.gagal.map(k => k + (j.saran && j.saran[k] ? ' (maksud Anda ' + j.saran[k].join(' / ') + '?)' : '')).join(', '));
     if (j.terpotong.length) b.push('Radar penuh, tidak masuk: ' + j.terpotong.join(', '));
     m.textContent = b.join('; ') + '.'; if (j.ditambah.length) $('#rdBanyak').value = '';
   } catch (e) { m.textContent = e.message; }
@@ -1928,7 +1934,7 @@ async function muatRingkas(diam) {
 }
 function rkKartu(b) {
   const r = b.rencana, ket = b.aksi === 'HINDARI' ? 'Jangan beli.' : '';
-  return `<div class="rkc"><h4><span>${esc(b.k)}${b.baru ? ' <span class="chip">terdeteksi naik</span>' : ''}</span><span class="badge ${b.acls}">${esc(b.aksi)}</span></h4>
+  return `<div class="rkc"><h4><span>${esc(b.k)}${b.baru ? (b.aj ? ' <span class="chip">naik · Ajaib</span>' : ' <span class="chip">naik · cek Ajaib</span>') : ''}</span><span class="badge ${b.acls}">${esc(b.aksi)}</span></h4>
     <div>Rp ${rp(b.harga)} <span class="note ${b.chg24 >= 0 ? 'good' : 'bad'}">24j ${pct(b.chg24)}</span> <span class="note ${b.chg7 >= 0 ? 'good' : 'bad'}">7h ${pct(b.chg7)}</span></div>
     <div class="note">${esc(b.vd)} · skor ${b.skor} · potensi ${esc(b.potensi)} · risiko ${esc(b.risiko)}</div>
     ${b.setup.length ? `<div class="note">Pemicu: ${b.setup.map(esc).join(', ')}</div>` : ''}
@@ -1947,7 +1953,7 @@ function renderRingkas() {
     ${r.rapor ? per('Rapor sinyal robot: ' + r.rapor.n + ' sinyal selesai. ' + r.rapor.putusan + '.') : per('Rapor sinyal robot belum punya data yang cukup; perlakukan hasil ini sebagai hitungan mekanis, bukan bukti.')}
     ${grup(layak, 'Layak dipertimbangkan beli')}${!layak.length ? '<p class="note" style="margin:10px 0">Saat ini tidak ada koin yang memenuhi semua syarat beli. Menunggu juga keputusan yang sah.</p>' : ''}
     ${grup(tunggu, 'Pantau, belum waktunya', true)}${grup(hindar, 'Hindari', true)}
-    <p class="note" style="margin-top:12px">${(r.baris || []).some(b => b.baru) ? 'Koin berlabel "terdeteksi naik" ditemukan otomatis dari bursa global dan belum tentu tersedia di Ajaib. ' : ''}Data harga dari bursa global (harga Rp = kurs USDT/IDR), diperbarui ${esc(upd)}; di Ajaib bisa berbeda tipis. ${r.gagal.length ? 'Data gagal diambil: ' + esc(r.gagal.join(', ')) + '. ' : ''}Alat edukasi, bukan saran investasi; kripto sangat fluktuatif.</p>
+    <p class="note" style="margin-top:12px">${(r.baris || []).some(b => b.baru) ? 'Koin berlabel "naik" ditemukan otomatis dari bursa global; yang berlabel "cek Ajaib" belum ada di daftar Ajaib robot dan belum tentu tersedia di Ajaib. ' : ''}Data harga dari bursa global (harga Rp = kurs USDT/IDR), diperbarui ${esc(upd)}; di Ajaib bisa berbeda tipis. ${r.gagal.length ? 'Data gagal diambil: ' + esc(r.gagal.join(', ')) + '. ' : ''}Alat edukasi, bukan saran investasi; kripto sangat fluktuatif.</p>
     <details><summary class="note"><b>Paket &amp; perpanjangan</b></summary><p class="note">3 hari Rp ${fi(r.harga.h3)} · 7 hari Rp ${fi(r.harga.h7)} · 30 hari Rp ${fi(r.harga.h30)}</p>${r.infoBayar ? `<p class="note" style="white-space:pre-line">${esc(r.infoBayar)}</p>` : ''}</details>`;
 }
 async function muatAdmin() {
@@ -1977,6 +1983,7 @@ function renderAdmin() {
   });
   $('#admTbl').innerHTML = h;
   if (a.paket && !document.activeElement.closest('#admPaket')) { $('#hg3').value = a.paket.harga.h3; $('#hg7').value = a.paket.harga.h7; $('#hg30').value = a.paket.harga.h30; $('#hgInfo').value = a.paket.info; }
+  if (a.ajaib) { $('#ajInfo').textContent = '(' + a.ajaib.jumlah + ' kode, ' + (a.ajaib.kustom ? 'diubah admin' : 'bawaan') + ')'; if (!document.activeElement.closest('#admAjaib')) $('#ajDaftar').value = a.ajaib.daftar; }
 }
 function tampilSandi(judul, username, sandi) {
   $('#admHasil').innerHTML = `<div class="pos"><b>${esc(judul)}</b><p class="note" style="margin:6px 0">Username: <b>${esc(username)}</b>. Sandi sementara (hanya tampil sekarang, salin dan berikan lewat jalur pribadi):</p><span class="sandibox">${esc(sandi)}</span></div>`;
@@ -2038,6 +2045,7 @@ $('#admBuat').onclick = () => {
   admAksi('adm_buat', {nama: $('#admNama').value, username: $('#admUser').value, izin, hari: Number($('#admHari').value) || 0}, j => { tampilSandi('Pengguna dibuat' + (j.berlaku ? ' (aktif sampai ' + j.berlaku + ')' : ''), j.username, j.sandiSementara); $('#admNama').value = $('#admUser').value = ''; $('#admMsg').textContent = ''; });
 };
 $('#hgSimpan').onclick = async () => { try { const j = await api('adm_harga', {h3: $('#hg3').value, h7: $('#hg7').value, h30: $('#hg30').value, info: $('#hgInfo').value}); S.adm.paket = j.paket; $('#hgMsg').textContent = 'Harga tersimpan.'; } catch (e) { $('#hgMsg').textContent = e.message; } };
+$('#ajSimpan').onclick = async () => { try { const j = await api('adm_ajaib', {daftar: $('#ajDaftar').value}); S.adm.ajaib = j; $('#ajInfo').textContent = '(' + j.jumlah + ' kode, ' + (j.kustom ? 'diubah admin' : 'bawaan') + ')'; $('#ajDaftar').value = j.daftar; $('#ajMsg').textContent = 'Tersimpan: ' + j.jumlah + ' kode.'; } catch (e) { $('#ajMsg').textContent = e.message; } };
 $('#btnRingkas').onclick = () => muatRingkas();
 $('#admBotSimpan').onclick = () => admAksi('adm_bot', {token: $('#admBotTok').value}, () => { $('#admBotTok').value = ''; $('#admBotMsg').textContent = 'Bot tersimpan.'; muat(); });
 $('#admBotHapus').onclick = () => { if (confirm('Lepas bot Telegram? Semua alert berhenti.')) admAksi('adm_bot', {token: ''}, () => { $('#admBotMsg').textContent = 'Bot dilepas.'; muat(); }); };

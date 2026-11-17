@@ -143,7 +143,7 @@ details.card[open] summary::after{content:'\2212'}
       <button class="tab" data-t="hindar">Hindari<b id="nHindar">0</b></button>
     </div>
     <p class="sub" id="tabInfo"></p>
-    <div class="bands" id="bands"><button class="band on" data-b="semua">Semua</button><button class="band" data-b="aj">Ada di Ajaib</button><button class="band" data-b="naik">Koin naik</button><button class="band" data-b="besar">Koin besar</button></div>
+    <div class="bands" id="bands"><button class="band on" data-b="semua">Semua</button><button class="band" data-b="aj">Ada di Ajaib</button><button class="band" data-b="naik">Koin naik</button><button class="band" data-b="besar">Koin besar</button><button class="band" data-b="ramai">Paling ramai</button><button class="band" data-b="pan">Pantauan robot</button></div>
     <div class="card" id="daftar"></div>
     <div class="card rapor" id="rapor" hidden></div>
 
@@ -176,7 +176,9 @@ details.card[open] summary::after{content:'\2212'}
         <h4>Membaca grafik kecil</h4>
         <p>Garis emas adalah harga penutupan harian ±30 hari terakhir (titik terakhir = harga sekarang). Untuk koin "Layak beli", garis putus-putus menandai batas "jangan kejar", stop, dan Target 1. Sentuh atau arahkan kursor ke grafik untuk melihat harga tiap hari. Grafik membantu melihat apakah harga sedang naik, turun, atau mendatar; bukan prediksi.</p>
         <h4>Filter</h4>
-        <p><b>Ada di Ajaib</b> hanya menampilkan koin yang ada di daftar Ajaib robot. <b>Koin naik</b> adalah koin yang ditemukan sedang naik hari ini. <b>Koin besar</b> adalah koin-koin utama yang selalu dipantau.</p>
+        <p><b>Ada di Ajaib</b> hanya menampilkan koin yang ada di daftar Ajaib robot. <b>Koin naik</b> adalah koin yang ditemukan sedang naik hari ini. <b>Koin besar</b> adalah koin-koin utama yang selalu dipantau. <b>Paling ramai</b> adalah koin dengan volume transaksi terbesar di luar koin utama, jadi cakupan ringkasan tidak terbatas pada daftar tetap. <b>Pantauan robot</b> adalah koin yang sedang dipantau admin (watchlist, posisi, Radar), sehingga alarm Telegram dan Ringkasan melihat koin yang sama.</p>
+        <h4>Alarm Telegram "naik cepat"</h4>
+        <p>Alarm itu hanya memberi tahu harga naik cepat, bukan rekomendasi beli. Di bawahnya ada baris "Status Ringkasan" yang menunjukkan apakah koin itu sudah layak beli menurut aturan ringkasan ini atau masih kurang beberapa syarat. Koin yang baru melonjak biasanya sudah melewati batas "jangan kejar".</p>
         <h4>Kotak "Uji historis"</h4>
         <p>Uji sederhana: seandainya setiap kali robot memberi putusan BELI di riwayat harian, hasilnya 3 dan 7 hari kemudian dihitung setelah biaya beli dan jual. Tanpa stop dan target, memakai harga penutupan, sehingga bukan hasil nyata. Hasil masa lalu tidak menjamin masa depan, dan kecilnya jumlah sampel membuat angka ini kasar.</p>
         <h4>"Layak beli" kadang kosong</h4>
@@ -316,7 +318,7 @@ function spark(b) {
     <div class="lg"><span>30 hari: ${pct(sp[sp.length - 1] / sp[0] - 1)}</span>${r ? '<span style="color:#d4af37">- - batas kejar</span><span style="color:#ff7b7b">- - stop</span><span style="color:#5fd18a">- - target 1</span>' : ''}</div></div>`;
 }
 function kartu(b) {
-  const r = b.rencana, chip = b.baru ? (b.aj ? ' <span class="chip">naik · Ajaib</span>' : ' <span class="chip warn">naik · cek Ajaib</span>') : '';
+  const r = b.rencana, chip = b.pan ? ' <span class="chip">pantauan robot</span>' : b.ramai ? ' <span class="chip">ramai</span>' : b.baru ? (b.aj ? ' <span class="chip">naik · Ajaib</span>' : ' <span class="chip warn">naik · cek Ajaib</span>') : '';
   const lv = r ? `<div class="lv"><div class="m">Jangan kejar di atas<b>${rp(r.maks)}</b></div><div class="s">Stop (${pct(r.stopPct)})<b>${rp(r.stop)}</b></div><div class="t">Target 1 / 2<b>${fx(r.t1)} / ${fx(r.t2)}</b></div></div>`
     + (b.kecil ? '<div class="cat">Disarankan memperkecil ukuran posisi (pasar lemah atau bukti sinyal belum kuat).</div>' : '')
     + `<button class="btnhit" data-hit="${esc(b.k)}">Hitung jumlah koin</button>`
@@ -326,7 +328,7 @@ function kartu(b) {
     <div class="meta">${esc(b.vd)} · skor ${b.skor} · potensi ${esc(b.potensi)} · risiko ${esc(b.risiko)}${b.setup.length ? ' · pemicu: ' + b.setup.map(esc).join(', ') : ''}</div>
     ${spark(b)}${b.alasan && b.alasan.length ? `<ul class="why">${(b.aksi.startsWith('LAYAK') ? b.alasan : b.alasan.slice(0, 2)).map(x => '<li>' + esc(x) + '</li>').join('')}</ul>` : ''}${lv}<div class="meta">${b.lulus} dari ${b.total} pemeriksaan terpenuhi.</div></div>`;
 }
-const saring = b => band === 'semua' || (band === 'aj' && b.aj) || (band === 'naik' && b.baru) || (band === 'besar' && !b.baru);
+const saring = b => band === 'semua' || (band === 'aj' && b.aj) || (band === 'naik' && b.baru) || (band === 'besar' && !b.baru && !b.pan && !b.ramai) || (band === 'ramai' && b.ramai) || (band === 'pan' && b.pan);
 function extras(r) {
   const mnt = r.upd ? Math.max(0, Math.round((Date.now() - new Date(r.upd)) / 60000)) : null, f = $('#fresh');
   f.innerHTML = mnt == null ? '' : `<span class="chip${mnt > 60 ? ' warn' : ''}">Data ${mnt < 1 ? 'baru saja' : mnt + ' menit lalu'}</span>${mnt > 60 ? '<span>Data agak lama; tekan Muat ulang.</span>' : ''}`;
@@ -338,7 +340,12 @@ function extras(r) {
     const f1 = x => (x * 100 >= 0 ? '+' : '') + (x * 100).toFixed(1).replace('.', ',') + '%', m = u.h7, m3 = u.h3;
     h += `<b>Uji historis sinyal BELI</b><p>Dari <b class="n">${u.n}</b> kejadian putusan BELI di riwayat harian ${u.koin} koin: 7 hari kemudian rata-rata <b class="n">${f1(m.rata)}</b> setelah biaya, dengan ${(m.menang * 100).toFixed(0)}% berakhir untung. Pembanding (semua hari): ${f1(m.semua)}. Untuk 3 hari: ${f1(m3.rata)} (pembanding ${f1(m3.semua)}).</p><p style="color:var(--muted);font-size:12px">Uji sederhana tanpa stop/target, memakai harga penutupan, kejadian berdekatan sudah dijarangkan (minimal 5 hari). Hasil masa lalu tidak menjamin masa depan.</p>`;
   }
-  if (r.rapor && r.rapor.n) h += `<p>Catatan sinyal nyata robot (${r.rapor.n} sinyal): ${esc(r.rapor.putusan || '')}</p>`;
+  const nm = {RINGKASAN: 'Layak beli', DEKAT: 'Hampir layak (tinggal ≤1 syarat)'};
+  if (r.rapor && (r.rapor.n || (r.rapor.sumber || []).length)) {
+    h += `<b>Catatan sinyal nyata</b><p>Setiap koin yang layak beli atau hampir layak dicatat otomatis, lalu dinilai sampai kena target, stop, atau 14 hari berlalu. ${r.rapor.n ? esc(r.rapor.putusan || '') : 'Belum ada sinyal yang selesai dinilai.'}</p>`;
+    h += (r.rapor.sumber || []).map(z => `<p style="margin:2px 0">${esc(nm[z.id] || z.id)}: ${z.n} selesai, ${z.terbuka} masih berjalan${z.n ? `, menang ${(z.win * 100).toFixed(0)}%, rata-rata ${z.avgR >= 0 ? '+' : ''}${z.avgR.toFixed(2).replace('.', ',')}R` : ''}</p>`).join('');
+    h += '<p style="color:var(--muted);font-size:12px">R = untung dibanding risiko stop (1R = jarak ke stop). Angka baru bermakna setelah sedikitnya 20 sinyal selesai. Perbandingan "layak" dan "hampir layak" menunjukkan apakah syarat terlalu ketat.</p>';
+  }
   k.hidden = !h; k.innerHTML = h;
 }
 function render() {

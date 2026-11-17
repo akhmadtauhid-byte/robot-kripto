@@ -325,7 +325,8 @@ function kartu(b) {
     : `${b.aksi === 'HINDARI' ? '<div class="cat">Jangan beli.</div>' : ''}${b.kurang.length ? `<div class="dekat"><span class="tg${b.kurang.length <= 2 ? ' dkt' : ''}">Tinggal ${b.kurang.length} syarat</span> ${b.kurang.map(x => esc(x.toLowerCase())).join('; ')}.</div>` : ''}`;
   return `<div class="item"><div class="row1"><div><span class="kode">${esc(b.k)}</span>${chip}<span class="badge ${esc(b.acls)}">${esc(b.aksi)}</span></div>
     <div class="harga">${rp(b.harga)}<div style="margin-top:3px"><span class="pill ${b.chg24 >= 0 ? 'up' : 'dn'}">24j ${pct(b.chg24)}</span><span class="pill ${b.chg7 >= 0 ? 'up' : 'dn'}">7h ${pct(b.chg7)}</span></div></div></div>
-    <div class="meta">${esc(b.vd)} · skor ${b.skor} · potensi ${esc(b.potensi)} · risiko ${esc(b.risiko)}${b.setup.length ? ' · pemicu: ' + b.setup.map(esc).join(', ') : ''}</div>
+    ${/BELI/.test(b.vd) && !b.aksi.startsWith('LAYAK') ? '<p class="note" style="margin:4px 0">Skor teknikal bagus, tetapi putusan akhir juga menilai likuiditas, risiko koin, dan pasar BTC.</p>' : ''}
+    <div class="meta">Teknikal saja: ${esc(b.vd.toLowerCase())} · skor ${b.skor} · potensi ${esc(b.potensi)} · risiko ${esc(b.risiko)}${b.setup.length ? ' · pemicu: ' + b.setup.map(esc).join(', ') : ''}</div>
     ${spark(b)}${b.alasan && b.alasan.length ? `<ul class="why">${(b.aksi.startsWith('LAYAK') ? b.alasan : b.alasan.slice(0, 2)).map(x => '<li>' + esc(x) + '</li>').join('')}</ul>` : ''}${lv}<div class="meta">${b.lulus} dari ${b.total} pemeriksaan terpenuhi.</div></div>`;
 }
 const saring = b => band === 'semua' || (band === 'aj' && b.aj) || (band === 'naik' && b.baru) || (band === 'besar' && !b.baru && !b.pan && !b.ramai) || (band === 'ramai' && b.ramai) || (band === 'pan' && b.pan);
